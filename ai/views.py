@@ -5,6 +5,12 @@ from ai.services.ollama import chat
 from drf_spectacular.utils import extend_schema
 from .serializers import OllamaChatRequest, OllamaChatResponse
 
+@extend_schema(
+    tags=["AI / Ollama"],
+    summary="Chat con Ollama",
+    description="Invoca Ollama local y retorna el texto generado.",
+    responses={200: OllamaChatResponse},
+)
 class OllamaChatView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
