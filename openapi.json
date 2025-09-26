@@ -1,0 +1,1790 @@
+openapi: 3.0.3
+info:
+  title: Agro AI Platform API
+  version: '0.1'
+  description: API para autenticación, parcelas y planes.
+paths:
+  /api/admin/parcelas/:
+    get:
+      operationId: api_admin_parcelas_list
+      summary: Listar todas las parcelas
+      parameters:
+      - in: query
+        name: ordering
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: search
+        schema:
+          type: string
+      - in: query
+        name: ubicacion
+        schema:
+          type: string
+      - in: query
+        name: usuario
+        schema:
+          type: integer
+      tags:
+      - Admin
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedParcelaListList'
+          description: ''
+  /api/admin/parcelas/{id}/:
+    get:
+      operationId: api_admin_parcelas_retrieve
+      summary: Detalle de parcela
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Admin
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParcelaList'
+          description: ''
+    put:
+      operationId: api_admin_parcelas_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParcelaUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ParcelaUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ParcelaUpdate'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParcelaUpdate'
+          description: ''
+    patch:
+      operationId: api_admin_parcelas_partial_update
+      summary: Editar parcela (campos básicos)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedParcelaUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedParcelaUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedParcelaUpdate'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParcelaList'
+          description: ''
+  /api/ai/chat/:
+    post:
+      operationId: api_ai_chat_create
+      description: |-
+        Simple chat endpoint using the global AI provider (Anthropic Claude Sonnet 4 by default).
+        Body:
+        { "messages": [ {"role": "user", "content": "..."}, ... ], "max_tokens": 512, "temperature": 0.7 }
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/ai/ollama/chat/:
+    post:
+      operationId: api_ai_ollama_chat_create
+      description: Invoca el binario de Ollama y retorna el texto generado.
+      summary: Chat con Ollama
+      tags:
+      - AI / Ollama
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OllamaChatRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OllamaChatRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/OllamaChatRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OllamaChatResponse'
+          description: ''
+        '400':
+          description: No response body
+        '502':
+          description: No response body
+        '500':
+          description: No response body
+  /api/alerts/:
+    get:
+      operationId: api_alerts_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAlertList'
+          description: ''
+  /api/alerts/rules/:
+    get:
+      operationId: api_alerts_rules_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAlertRuleList'
+          description: ''
+    post:
+      operationId: api_alerts_rules_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertRule'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AlertRule'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AlertRule'
+        required: true
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertRule'
+          description: ''
+  /api/ingest/:
+    post:
+      operationId: api_ingest_create
+      summary: Ingesta de datos desde nodo maestro
+      tags:
+      - Ingesta
+      security:
+      - TokenAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/parcelas/:
+    get:
+      operationId: api_parcelas_list
+      summary: Listar parcelas
+      parameters:
+      - in: query
+        name: ordering
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: search
+        schema:
+          type: string
+      - in: query
+        name: ubicacion
+        schema:
+          type: string
+      tags:
+      - Parcelas
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedParcelaListList'
+          description: ''
+    post:
+      operationId: api_parcelas_create
+      summary: Crear parcela y asignar plan
+      tags:
+      - Parcelas
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParcelaCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ParcelaCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ParcelaCreate'
+        required: true
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParcelaCreate'
+          description: ''
+  /api/parcelas/{parcela_id}/cambiar-plan/:
+    post:
+      operationId: api_parcelas_cambiar_plan_create
+      summary: Cambiar plan de una parcela
+      parameters:
+      - in: path
+        name: parcela_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Planes
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/parcelas/{id}/:
+    get:
+      operationId: api_parcelas_retrieve
+      summary: Detalle de parcela
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Parcelas
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParcelaUpdate'
+          description: ''
+    put:
+      operationId: api_parcelas_update
+      summary: Editar
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Parcelas
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParcelaUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ParcelaUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ParcelaUpdate'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParcelaUpdate'
+          description: ''
+    patch:
+      operationId: api_parcelas_partial_update
+      summary: Editar parcialmente
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Parcelas
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedParcelaUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedParcelaUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedParcelaUpdate'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParcelaUpdate'
+          description: ''
+  /api/planes/:
+    get:
+      operationId: api_planes_list
+      summary: Listar planes
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Planes
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPlanList'
+          description: ''
+  /api/rbac/admin/users/:
+    get:
+      operationId: api_rbac_admin_users_list
+      summary: Listar usuarios
+      parameters:
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+      - in: query
+        name: ordering
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: rol
+        schema:
+          type: integer
+      - in: query
+        name: search
+        schema:
+          type: string
+      tags:
+      - Admin
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAdminUserListList'
+          description: ''
+  /api/rbac/admin/users/{id}/:
+    get:
+      operationId: api_rbac_admin_users_retrieve
+      summary: Detalle de usuario
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Admin
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserList'
+          description: ''
+    put:
+      operationId: api_rbac_admin_users_update
+      summary: Actualizar usuario (email, activo, rol)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpdate'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserList'
+          description: ''
+    patch:
+      operationId: api_rbac_admin_users_partial_update
+      summary: Actualizar usuario (email, activo, rol)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - Admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedAdminUserUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedAdminUserUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedAdminUserUpdate'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserList'
+          description: ''
+  /api/rbac/modulos/:
+    get:
+      operationId: api_rbac_modulos_list
+      summary: Listar módulos
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - RBAC
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedModuloList'
+          description: ''
+  /api/rbac/modulos/{id}/:
+    get:
+      operationId: api_rbac_modulos_retrieve
+      summary: Listar módulos
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this modulo.
+        required: true
+      tags:
+      - RBAC
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Modulo'
+          description: ''
+  /api/rbac/permissions/:
+    get:
+      operationId: api_rbac_permissions_list
+      summary: Listar permisos por rol/módulo
+      parameters:
+      - in: query
+        name: modulo
+        schema:
+          type: integer
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: rol
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - RBAC
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRolesOperacionesList'
+          description: ''
+    post:
+      operationId: api_rbac_permissions_create
+      summary: Conceder permiso a un rol
+      tags:
+      - RBAC
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolesOperaciones'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RolesOperaciones'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RolesOperaciones'
+        required: true
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolesOperaciones'
+          description: ''
+  /api/rbac/permissions/{id}/:
+    get:
+      operationId: api_rbac_permissions_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this roles operaciones.
+        required: true
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolesOperaciones'
+          description: ''
+    delete:
+      operationId: api_rbac_permissions_destroy
+      summary: Revocar permiso (por id)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this roles operaciones.
+        required: true
+      tags:
+      - RBAC
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/rbac/roles/:
+    get:
+      operationId: api_rbac_roles_list
+      summary: Listar roles
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - RBAC
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRolList'
+          description: ''
+  /api/rbac/roles/{id}/:
+    get:
+      operationId: api_rbac_roles_retrieve
+      summary: Listar roles
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this rol.
+        required: true
+      tags:
+      - RBAC
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rol'
+          description: ''
+  /api/rbac/users/{user_id}/role/:
+    patch:
+      operationId: api_rbac_users_role_partial_update
+      summary: Cambiar rol de un usuario
+      parameters:
+      - in: path
+        name: user_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - RBAC
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedUserRoleUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedUserRoleUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedUserRoleUpdate'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/schema/:
+    get:
+      operationId: api_schema_retrieve
+      description: |-
+        OpenApi3 schema for this API. Format can be selected via content negotiation.
+
+        - YAML: application/vnd.oai.openapi
+        - JSON: application/vnd.oai.openapi+json
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - yaml
+      - in: query
+        name: lang
+        schema:
+          type: string
+          enum:
+          - af
+          - ar
+          - ar-dz
+          - ast
+          - az
+          - be
+          - bg
+          - bn
+          - br
+          - bs
+          - ca
+          - ckb
+          - cs
+          - cy
+          - da
+          - de
+          - dsb
+          - el
+          - en
+          - en-au
+          - en-gb
+          - eo
+          - es
+          - es-ar
+          - es-co
+          - es-mx
+          - es-ni
+          - es-ve
+          - et
+          - eu
+          - fa
+          - fi
+          - fr
+          - fy
+          - ga
+          - gd
+          - gl
+          - he
+          - hi
+          - hr
+          - hsb
+          - hu
+          - hy
+          - ia
+          - id
+          - ig
+          - io
+          - is
+          - it
+          - ja
+          - ka
+          - kab
+          - kk
+          - km
+          - kn
+          - ko
+          - ky
+          - lb
+          - lt
+          - lv
+          - mk
+          - ml
+          - mn
+          - mr
+          - ms
+          - my
+          - nb
+          - ne
+          - nl
+          - nn
+          - os
+          - pa
+          - pl
+          - pt
+          - pt-br
+          - ro
+          - ru
+          - sk
+          - sl
+          - sq
+          - sr
+          - sr-latn
+          - sv
+          - sw
+          - ta
+          - te
+          - tg
+          - th
+          - tk
+          - tr
+          - tt
+          - udm
+          - uk
+          - ur
+          - uz
+          - vi
+          - zh-hans
+          - zh-hant
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/vnd.oai.openapi:
+              schema:
+                type: object
+                additionalProperties: {}
+            application/yaml:
+              schema:
+                type: object
+                additionalProperties: {}
+            application/vnd.oai.openapi+json:
+              schema:
+                type: object
+                additionalProperties: {}
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/sensors/:
+    get:
+      operationId: api_sensors_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedSensorList'
+          description: ''
+  /api/sensors/{sensor_id}/readings/:
+    get:
+      operationId: api_sensors_readings_retrieve
+      parameters:
+      - in: path
+        name: sensor_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /auth/login/:
+    post:
+      operationId: auth_login_create
+      tags:
+      - Auth
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /auth/logout/:
+    post:
+      operationId: auth_logout_create
+      summary: Cerrar sesión (invalidar token)
+      tags:
+      - Auth
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /auth/me/:
+    get:
+      operationId: auth_me_retrieve
+      summary: Datos de mi cuenta
+      tags:
+      - Auth
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: auth_me_partial_update
+      summary: Actualizar mi perfil
+      tags:
+      - Auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedPerfilUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedPerfilUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedPerfilUpdate'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /auth/register/:
+    post:
+      operationId: auth_register_create
+      tags:
+      - Auth
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /auth/token/:
+    post:
+      operationId: auth_token_create
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AuthToken'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AuthToken'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthToken'
+        required: true
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+          description: ''
+components:
+  schemas:
+    AdminUserList:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        username:
+          type: string
+          description: Required. 150 characters or fewer. Letters, digits and @/./+/-/_
+            only.
+          pattern: ^[\w.@+-]+$
+          maxLength: 150
+        email:
+          type: string
+          format: email
+          title: Email address
+          maxLength: 254
+        rol:
+          type: string
+          readOnly: true
+        is_active:
+          type: boolean
+        date_joined:
+          type: string
+          format: date-time
+      required:
+      - id
+      - rol
+      - username
+    AdminUserUpdate:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email address
+          maxLength: 254
+        is_active:
+          type: boolean
+        rol_id:
+          type: integer
+          writeOnly: true
+    Alert:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        sensor:
+          type: integer
+        valor:
+          type: number
+          format: double
+        mensaje:
+          type: string
+        triggered_at:
+          type: string
+          format: date-time
+          readOnly: true
+        rule:
+          type: integer
+          nullable: true
+      required:
+      - id
+      - mensaje
+      - sensor
+      - triggered_at
+      - valor
+    AlertRule:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        sensor:
+          type: integer
+        operador:
+          $ref: '#/components/schemas/OperadorEnum'
+        umbral:
+          type: number
+          format: double
+        activo:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - operador
+      - sensor
+      - umbral
+    AuthToken:
+      type: object
+      properties:
+        username:
+          type: string
+          writeOnly: true
+        password:
+          type: string
+          writeOnly: true
+        token:
+          type: string
+          readOnly: true
+      required:
+      - password
+      - token
+      - username
+    Modulo:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 50
+      required:
+      - id
+      - nombre
+    OllamaChatRequest:
+      type: object
+      properties:
+        prompt:
+          type: string
+      required:
+      - prompt
+    OllamaChatResponse:
+      type: object
+      properties:
+        text:
+          type: string
+      required:
+      - text
+    OperadorEnum:
+      enum:
+      - '>'
+      - <
+      - '>='
+      - <=
+      - ==
+      type: string
+      description: |-
+        * `>` - >
+        * `<` - <
+        * `>=` - >=
+        * `<=` - <=
+        * `==` - ==
+    PaginatedAdminUserListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserList'
+    PaginatedAlertList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+    PaginatedAlertRuleList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlertRule'
+    PaginatedModuloList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Modulo'
+    PaginatedParcelaListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParcelaList'
+    PaginatedPlanList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Plan'
+    PaginatedRolList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rol'
+    PaginatedRolesOperacionesList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolesOperaciones'
+    PaginatedSensorList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Sensor'
+    ParcelaCreate:
+      type: object
+      properties:
+        nombre:
+          type: string
+        ubicacion:
+          type: string
+        tamano_hectareas:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+        coordenadas:
+          type: string
+        plan_id:
+          type: integer
+          writeOnly: true
+      required:
+      - nombre
+      - plan_id
+    ParcelaList:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 100
+        ubicacion:
+          type: string
+          maxLength: 255
+        tamano_hectareas:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          nullable: true
+        plan_activo:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - nombre
+      - plan_activo
+      - updated_at
+    ParcelaUpdate:
+      type: object
+      properties:
+        nombre:
+          type: string
+          maxLength: 100
+        ubicacion:
+          type: string
+          maxLength: 255
+        tamano_hectareas:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          nullable: true
+        coordenadas:
+          type: string
+          maxLength: 255
+    PatchedAdminUserUpdate:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email address
+          maxLength: 254
+        is_active:
+          type: boolean
+        rol_id:
+          type: integer
+          writeOnly: true
+    PatchedParcelaUpdate:
+      type: object
+      properties:
+        nombre:
+          type: string
+          maxLength: 100
+        ubicacion:
+          type: string
+          maxLength: 255
+        tamano_hectareas:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          nullable: true
+        coordenadas:
+          type: string
+          maxLength: 255
+    PatchedPerfilUpdate:
+      type: object
+      properties:
+        nombres:
+          type: string
+          nullable: true
+          maxLength: 50
+        apellidos:
+          type: string
+          nullable: true
+          maxLength: 50
+        telefono:
+          type: string
+          nullable: true
+          maxLength: 15
+        dni:
+          type: string
+          nullable: true
+          maxLength: 8
+        fecha_nacimiento:
+          type: string
+          format: date
+          nullable: true
+    PatchedUserRoleUpdate:
+      type: object
+      properties:
+        rol_id:
+          type: integer
+    Plan:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 50
+        descripcion:
+          type: string
+          nullable: true
+        frecuencia_minutos:
+          type: integer
+          nullable: true
+        precio:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - nombre
+      - precio
+      - updated_at
+    Rol:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 50
+      required:
+      - id
+      - nombre
+    RolesOperaciones:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        rol:
+          type: integer
+        modulo:
+          type: integer
+        operacion:
+          type: integer
+      required:
+      - id
+      - modulo
+      - operacion
+      - rol
+    Sensor:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        nombre:
+          type: string
+          maxLength: 100
+        tipo:
+          type: string
+          maxLength: 50
+        unidad:
+          type: string
+          maxLength: 20
+        node:
+          type: integer
+        parcela:
+          type: integer
+          nullable: true
+        last_value:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - last_value
+      - node
+      - nombre
+      - tipo
+      - unidad
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+    tokenAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Token-based authentication with required prefix "Token"
