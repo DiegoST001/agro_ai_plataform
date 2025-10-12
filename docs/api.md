@@ -3,6 +3,9 @@
 Versión: 0.1  
 Última actualización: 2025-09-26
 
+Usuarios/clientes: Authorization: Token ...
+Nodos: Authorization: Node ...
+
 ## Introducción
 API REST para gestionar autenticación de usuarios, parcelas y la asignación de planes por parcela. Esta versión cubre:
 - Registro y login de usuarios (rol agricultor).

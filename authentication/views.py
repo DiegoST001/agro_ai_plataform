@@ -8,9 +8,22 @@ from .serializers import UserRegisterSerializer, AccountSerializer, PerfilUpdate
 from .models import User
 from users.models import PerfilUsuario
 
-@extend_schema(tags=['Auth'], examples=[
-    OpenApiExample('Registro', value={"username":"agri01","email":"a@b.com","password":"***"})
-])
+@extend_schema(
+    tags=['Auth'],
+    summary='Registrar nuevo usuario',
+    description='Permite registrar un nuevo usuario en la plataforma. Retorna el token de autenticación y los datos básicos del usuario.',
+    request=UserRegisterSerializer,
+    responses={
+        201: OpenApiExample(
+            'Respuesta exitosa',
+            value={"token": "abc123", "user": {"user_id": 1, "username": "agri01", "email": "a@b.com"}}
+        ),
+        400: OpenApiExample('Error', value={"detail": "Datos inválidos"})
+    },
+    examples=[
+        OpenApiExample('Registro', value={"username":"agri01","email":"a@b.com","password":"***"})
+    ]
+)
 class RegisterView(views.APIView):
     permission_classes = []
 
@@ -22,9 +35,22 @@ class RegisterView(views.APIView):
         token, _ = Token.objects.get_or_create(user=user)
         return Response({'token': token.key, 'user': result}, status=status.HTTP_201_CREATED)
 
-@extend_schema(tags=['Auth'], examples=[
-    OpenApiExample('Login', value={"username":"agri01","password":"***"})
-])
+@extend_schema(
+    tags=['Auth'],
+    summary='Login de usuario',
+    description='Permite iniciar sesión con usuario y contraseña. Retorna el token de autenticación y los datos básicos del usuario.',
+    request=AccountSerializer,
+    responses={
+        200: OpenApiExample(
+            'Respuesta exitosa',
+            value={"token": "abc123", "user": {"user_id": 1, "username": "agri01", "email": "a@b.com"}}
+        ),
+        400: OpenApiExample('Error', value={"detail": "Credenciales inválidas"})
+    },
+    examples=[
+        OpenApiExample('Login', value={"username":"agri01","password":"***"})
+    ]
+)
 class LoginView(views.APIView):
     permission_classes = []
 
@@ -37,7 +63,12 @@ class LoginView(views.APIView):
         token, _ = Token.objects.get_or_create(user=user)
         return Response({'token': token.key, 'user': {'user_id': user.id, 'username': user.username, 'email': user.email}}, status=status.HTTP_200_OK)
 
-@extend_schema(tags=['Auth'], summary='Cerrar sesión (invalidar token)')
+@extend_schema(
+    tags=['Auth'],
+    summary='Cerrar sesión (invalidar token)',
+    description='Cierra la sesión del usuario actual e invalida el token de autenticación.',
+    responses={204: OpenApiExample('Logout exitoso', value={})}
+)
 class LogoutView(views.APIView):
     authentication_classes = [TokenAuthentication, SessionAuthentication]
     permission_classes = [permissions.IsAuthenticated]
@@ -50,8 +81,19 @@ class LogoutView(views.APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 @extend_schema_view(
-    get=extend_schema(tags=['Auth'], summary='Datos de mi cuenta'),
-    patch=extend_schema(tags=['Auth'], summary='Actualizar mi perfil', request=PerfilUpdateSerializer)
+    get=extend_schema(
+        tags=['Auth'],
+        summary='Datos de mi cuenta',
+        description='Devuelve los datos básicos del usuario autenticado.',
+        responses=AccountSerializer,
+    ),
+    patch=extend_schema(
+        tags=['Auth'],
+        summary='Actualizar mi perfil',
+        description='Permite actualizar los datos del perfil del usuario autenticado.',
+        request=PerfilUpdateSerializer,
+        responses=AccountSerializer,
+    )
 )
 class MeView(views.APIView):
     authentication_classes = [TokenAuthentication, SessionAuthentication]

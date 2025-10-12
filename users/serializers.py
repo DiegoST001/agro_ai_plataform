@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Rol, Modulo, Operacion, RolesOperaciones, UserOperacionOverride
+from .models import Rol, Modulo, Operacion, RolesOperaciones, UserOperacionOverride, PerfilUsuario
 from authentication.models import User
 
 class RolSerializer(serializers.ModelSerializer):
@@ -68,3 +68,32 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
         if rol_id is not None:
             instance.rol_id = rol_id
         return super().update(instance, validated_data)
+
+class PerfilUsuarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PerfilUsuario
+        fields = [
+            'nombres',
+            'apellidos',
+            'telefono',
+            'dni',
+            'fecha_nacimiento',
+            'experiencia_agricola'
+            # Si quieres incluir foto_perfil, agrégalo aquí
+        ]
+
+class UserWithProfileSerializer(serializers.ModelSerializer):
+    profile = PerfilUsuarioSerializer(source='perfilusuario', read_only=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'profile']
+
+class UserDetailSerializer(serializers.ModelSerializer):
+    rol = serializers.CharField(source='rol.nombre', read_only=True)
+    profile = PerfilUsuarioSerializer(source='perfilusuario', read_only=True)
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'email', 'is_active', 'rol', 'date_joined', 'profile'
+        ]

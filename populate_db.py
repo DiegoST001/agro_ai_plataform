@@ -5,12 +5,17 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'agro_ai_platform.settings')
 django.setup()
 from datetime import datetime, timezone
 from django.conf import settings
-from users.models import Rol, Modulo, Operacion, RolesOperaciones
+from users.models import Rol, Modulo, Operacion, RolesOperaciones, PerfilUsuario
 from plans.models import Plan
 from authentication.models import User
 from parcels.models import Parcela
 from recommendations.models import Recommendation
 from rest_framework.authtoken.models import Token
+from nodes.models import Node, NodoSecundario
+
+# Elimina perfiles y parcelas previos
+PerfilUsuario.objects.all().delete()
+Parcela.objects.all().delete()
 
 # 1) Roles base
 ROLES = ['agricultor', 'administrador', 'tecnico', 'superadmin']
@@ -176,7 +181,8 @@ parcela1, _ = Parcela.objects.get_or_create(
     defaults={
         "ubicacion": "Valle Central",
         "tamano_hectareas": 5.0,
-        "coordenadas": "-12.0464,-77.0428",
+        "latitud": -12.0464,
+        "longitud": -77.0428,
         "altitud": 120.0,
         "tipo_cultivo": "Maíz",
     }
@@ -186,7 +192,8 @@ parcela2, _ = Parcela.objects.get_or_create(
     defaults={
         "ubicacion": "Costa Norte",
         "tamano_hectareas": 12.5,
-        "coordenadas": "-5.1945,-80.6328",
+        "latitud": -5.1945,
+        "longitud": -80.6328,
         "altitud": 45.0,
         "tipo_cultivo": "Arroz",
     }
@@ -196,7 +203,8 @@ parcela3, _ = Parcela.objects.get_or_create(
     defaults={
         "ubicacion": "Sierra Sur",
         "tamano_hectareas": 3.2,
-        "coordenadas": "-13.1631,-72.5450",
+        "latitud": -13.1631,
+        "longitud": -72.5450,
         "altitud": 3400.0,
         "tipo_cultivo": "Papa",
     }
@@ -214,6 +222,83 @@ Recommendation.objects.get_or_create(
     defaults={"detalle": "Aplicar NPK 15-15-15 a razón de 150 kg/ha", "tipo": "nutricion"}
 )
 
+# 10) Nodos maestros y secundarios demo
+nodo_maestro1, _ = Node.objects.get_or_create(
+    codigo="NODE-001",
+    parcela=parcela1,
+    defaults={
+        "lat": -12.0464,
+        "lng": -77.0428,
+        "estado": "activo",
+        "bateria": 95,
+        "senal": -70,
+        "last_seen": datetime(2025, 10, 1, 8, 0, 0, tzinfo=timezone.utc),
+    }
+)
+nodo_maestro2, _ = Node.objects.get_or_create(
+    codigo="NODE-002",
+    parcela=parcela2,
+    defaults={
+        "lat": -5.1945,
+        "lng": -80.6328,
+        "estado": "activo",
+        "bateria": 90,
+        "senal": -65,
+        "last_seen": datetime(2025, 10, 2, 8, 0, 0, tzinfo=timezone.utc),
+    }
+)
+nodo_maestro3, _ = Node.objects.get_or_create(
+    codigo="NODE-003",
+    parcela=parcela3,
+    defaults={
+        "lat": -13.1631,
+        "lng": -72.5450,
+        "estado": "activo",
+        "bateria": 80,
+        "senal": -60,
+        "last_seen": datetime(2025, 10, 3, 8, 0, 0, tzinfo=timezone.utc),
+    }
+)
+
+secundarios1 = []
+for i in range(1, 4):
+    sec, _ = NodoSecundario.objects.get_or_create(
+        codigo=f"NODE-01-S{i}",
+        maestro=nodo_maestro1,
+        defaults={
+            "estado": "activo",
+            "bateria": 90 - i * 2,
+            "last_seen": datetime(2025, 10, 1, 8, 10 + i, 0, tzinfo=timezone.utc),
+        }
+    )
+    secundarios1.append(sec)
+
+secundarios2 = []
+for i in range(1, 6):
+    sec, _ = NodoSecundario.objects.get_or_create(
+        codigo=f"NODE-02-S{i}",
+        maestro=nodo_maestro2,
+        defaults={
+            "estado": "activo",
+            "bateria": 88 - i * 2,
+            "last_seen": datetime(2025, 10, 2, 8, 10 + i, 0, tzinfo=timezone.utc),
+        }
+    )
+    secundarios2.append(sec)
+
+secundarios3 = []
+for i in range(1, 3):
+    sec, _ = NodoSecundario.objects.get_or_create(
+        codigo=f"NODE-03-S{i}",
+        maestro=nodo_maestro3,
+        defaults={
+            "estado": "activo",
+            "bateria": 75 - i * 2,
+            "last_seen": datetime(2025, 10, 3, 8, 10 + i, 0, tzinfo=timezone.utc),
+        }
+    )
+    secundarios3.append(sec)
+
 # 9) MongoDB: telemetría demo
 try:
     from pymongo import MongoClient
@@ -222,43 +307,95 @@ try:
     client = MongoClient(settings.MONGO_URL)
     mdb = client[settings.MONGO_DB]
     readings = mdb.sensor_readings
-    # índices básicos
     readings.create_index([("parcela_id", 1)])
     readings.create_index([("timestamp", -1)])
 
-    # upsert simple: evitamos duplicar si ya insertamos
     if readings.count_documents({"seed_tag": "demo"}) == 0:
         docs = [
             {
                 "seed_tag": "demo",
                 "parcela_id": parcela1.id,
-                "usuario": agri.username,
-                "sensor": "soil_moisture",
-                "unidad": "%",
-                "valor": v,
-                "timestamp": dt.datetime.utcnow() - dt.timedelta(minutes=i*10),
-            }
-            for i, v in enumerate([32.1, 33.4, 31.8, 34.2, 35.0])
-        ] + [
+                "codigo_nodo_maestro": nodo_maestro1.codigo,
+                "timestamp": dt.datetime(2025, 10, 1, 8, 0, 0),
+                "lecturas": [
+                    {
+                        "nodo_codigo": secundarios1[0].codigo,
+                        "last_seen": secundarios1[0].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 22.5, "unidad": "°C"},
+                            {"sensor": "humedad", "valor": 65.2, "unidad": "%"},
+                        ]
+                    },
+                    {
+                        "nodo_codigo": secundarios1[1].codigo,
+                        "last_seen": secundarios1[1].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 23.1, "unidad": "°C"},
+                        ]
+                    }
+                ]
+            },
             {
                 "seed_tag": "demo",
-                "parcela_id": parcela2.id,
-                "usuario": agri.username,
-                "sensor": "temp_ambiente",
-                "unidad": "C",
-                "valor": v,
-                "timestamp": dt.datetime.utcnow() - dt.timedelta(minutes=i*15),
-            }
-            for i, v in enumerate([24.0, 24.6, 25.2, 26.1])
+                "parcela_id": parcela1.id,
+                "codigo_nodo_maestro": nodo_maestro1.codigo,
+                "timestamp": dt.datetime(2025, 10, 1, 14, 0, 0),
+                "lecturas": [
+                    {
+                        "nodo_codigo": secundarios1[2].codigo,
+                        "last_seen": secundarios1[2].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 23.0, "unidad": "°C"},
+                            {"sensor": "humedad", "valor": 66.0, "unidad": "%"},
+                        ]
+                    }
+                ]
+            },
         ]
+
+        # Agregar 10 documentos adicionales usando los nodos reales
+        for i in range(10):
+            maestro = nodo_maestro2 if i % 2 == 0 else nodo_maestro1
+            secundarios = secundarios2 if maestro == nodo_maestro2 else secundarios1
+            docs.append({
+                "seed_tag": "demo",
+                "parcela_id": parcela2.id if maestro == nodo_maestro2 else parcela1.id,
+                "codigo_nodo_maestro": maestro.codigo,
+                "timestamp": dt.datetime(2025, 10, 2, 8 + i, 0, 0),
+                "lecturas": [
+                    {
+                        "nodo_codigo": secundarios[i % len(secundarios)].codigo,
+                        "last_seen": secundarios[i % len(secundarios)].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 20.0 + i, "unidad": "°C"},
+                            {"sensor": "humedad", "valor": 60.0 + i, "unidad": "%"},
+                        ]
+                    }
+                ]
+            })
+
         readings.insert_many(docs)
         print("MongoDB: sensor_readings insertados.")
     else:
         print("MongoDB: seed_tag=demo ya existe, no se duplica.")
-
 except ImportError:
     print("Nota: pymongo no instalado. Ejecuta: pip install pymongo")
 except Exception as e:
     print(f"MongoDB: error al insertar datos demo -> {e}")
 
-print('Seed OK: roles, módulos, operaciones, permisos, planes, usuarios, parcelas y MongoDB.')
+# Crear perfiles demo
+for u in usuarios_seed:
+    if u.username in ['admin1', 'tecnico1', 'agricultor1']:
+        PerfilUsuario.objects.create(
+            usuario=u,
+            nombres=f"{u.username.capitalize()} Nombre",
+            apellidos=f"{u.username.capitalize()} Apellido",
+            telefono="999999999",
+            dni="12345678",
+            experiencia_agricola=2,
+            fecha_nacimiento="1990-01-01",
+        )
+
+print(
+    "Seed OK: roles, módulos, operaciones, permisos, planes, usuarios, parcelas, MongoDB y nodos."
+)

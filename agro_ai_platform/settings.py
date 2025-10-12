@@ -12,22 +12,17 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv  # <-- Agrega esta línea
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
+# Carga las variables del archivo .env
+load_dotenv(os.path.join(BASE_DIR, '.env'))  # <-- Agrega esta línea
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'your-secret-key'
+SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key')
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
-
-# Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -42,25 +37,16 @@ INSTALLED_APPS = [
     'users',
     'parcels',
     'plans',
-    # NUEVOS MÓDULOS
-    'ai_integration',
     "ai",
     'nodes',
-    'sensors',
-    'alerts',
     'recommendations',
-    'tokensapp',
-    'tasks',  # app para tareas de negocio (no confunde a Celery)
-    # Celery
-    'django_celery_beat',
-    'django_celery_results',
-    # Docs
+    # 'tokensapp',
+    'tasks',
     'drf_spectacular',
     'drf_spectacular_sidecar',
 ]
 
 MIDDLEWARE = [
-    # 'corsheaders.middleware.CorsMiddleware',  # <- si activas corsheaders, colócalo al inicio
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -90,55 +76,33 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'agro_ai_platform.wsgi.application'
 
-# Database
-# https://docs.djangoproject.com/en/4.0/ref/settings/#databases
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql', 
+        'NAME': os.getenv('POSTGRES_DB', 'agro_ai_db'),
+        'USER': os.getenv('POSTGRES_USER', 'agro_ai_user'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'password'),
+        'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+        'PORT': os.getenv('POSTGRES_PORT', '5432'),
     }
 }
 
-# Password validation
-# https://docs.djangoproject.com/en/4.0/ref/settings/#auth-password-validators
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-# Internationalization
-# https://docs.djangoproject.com/en/4.0/topics/i18n/
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_L10N = True
-
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/4.0/howto/static-files/
 STATIC_URL = '/static/'
-
-# Default primary key field type
-# https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
 AUTH_USER_MODEL = 'authentication.User'
-
-# Crear parcela usando el método del modelo
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -169,19 +133,3 @@ SPECTACULAR_SETTINGS = {
 # MongoDB (telemetría de sensores)
 MONGO_URL = os.getenv('MONGO_URL', 'mongodb://localhost:27017')
 MONGO_DB = os.getenv('MONGO_DB', 'agro_ai')
-
-# Celery/Beat
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'memory://')
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'cache+memory://')
-CELERY_TASK_ALWAYS_EAGER = True  # las tareas se ejecutan inline; no necesitas worker ni Redis
-
-# CORS_ALLOWED_ORIGINS = ['http://localhost:3000']  # ajusta según tu frontend
-
-# AI Providers (global)
-# Proveedor y modelo por defecto para todos los clientes. Se puede sobreescribir por entorno.
-AI_PROVIDER = os.getenv('AI_PROVIDER', 'anthropic')
-# Nota: el modelo "Claude Sonnet 4" se expresa como un nombre de modelo. Ajusta si tu cuenta usa otro alias.
-ANTHROPIC_MODEL = os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4')
-ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY', '')
-ANTHROPIC_API_URL = os.getenv('ANTHROPIC_API_URL', 'https://api.anthropic.com/v1/messages')
-ANTHROPIC_API_VERSION = os.getenv('ANTHROPIC_API_VERSION', '2023-06-01')

@@ -9,7 +9,7 @@ class NodeAdmin(admin.ModelAdmin):
 
 @admin.register(NodoSecundario)
 class NodoSecundarioAdmin(admin.ModelAdmin):
-    list_display = ('id', 'codigo', 'maestro', 'estado', 'bateria', 'senal', 'last_seen')
+    list_display = ('id', 'codigo', 'maestro', 'estado', 'bateria', 'last_seen')  # 'senal' eliminado
     search_fields = ('codigo',)
     list_filter = ('estado',)
 

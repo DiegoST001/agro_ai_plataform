@@ -1,7 +1,7 @@
 from rest_framework import serializers
+from .models import AIIntegration
 
-class OllamaChatRequest(serializers.Serializer):
-    prompt = serializers.CharField()
-
-class OllamaChatResponse(serializers.Serializer):
-    text = serializers.CharField()
+class AIIntegrationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AIIntegration
+        fields = "__all__"

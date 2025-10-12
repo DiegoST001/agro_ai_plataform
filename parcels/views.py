@@ -1,5 +1,5 @@
 from rest_framework import permissions, generics
-from .serializers import ParcelaCreateSerializer, ParcelaListSerializer, ParcelaUpdateSerializer
+from .serializers import ParcelaCreateSerializer, ParcelaListSerializer, ParcelaUpdateSerializer, ParcelaBasicListSerializer
 from .models import Parcela
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter, OpenApiTypes
 from users.permissions import HasOperationPermission
@@ -14,7 +14,7 @@ from users.permissions import HasOperationPermission
 )
 class ParcelaListCreateView(generics.ListCreateAPIView):
     queryset = Parcela.objects.all()
-    filterset_fields = ['ubicacion']
+    filterset_fields = ['ubicacion', 'latitud', 'longitud']
     search_fields = ['nombre', 'ubicacion']
     ordering_fields = ['created_at', 'nombre', 'tamano_hectareas']
     ordering = ['-created_at']
@@ -71,8 +71,8 @@ class ParcelaDetailView(generics.RetrieveUpdateAPIView):
     )
 )
 class AdminParcelaListView(generics.ListAPIView):
+    serializer_class = ParcelaBasicListSerializer  # Solo datos básicos
     queryset = Parcela.objects.select_related('usuario').all()
-    serializer_class = ParcelaListSerializer
     filterset_fields = ['usuario', 'ubicacion']
     search_fields = ['nombre', 'ubicacion', 'usuario__username']
     ordering_fields = ['created_at', 'nombre', 'tamano_hectareas']
@@ -84,29 +84,14 @@ class AdminParcelaListView(generics.ListAPIView):
 @extend_schema_view(
     get=extend_schema(tags=['Admin'], summary='Detalle de parcela', responses=ParcelaListSerializer),
     patch=extend_schema(tags=['Admin'], summary='Editar parcela (campos básicos)', request=ParcelaUpdateSerializer, responses=ParcelaListSerializer),
+    put=extend_schema(tags=['Admin'], summary='Editar parcela', request=ParcelaUpdateSerializer, responses=ParcelaListSerializer),
 )
-class AdminParcelaDetailView(generics.RetrieveUpdateAPIView):
+class AdminParcelaDetailView(generics.RetrieveAPIView):
+    serializer_class = ParcelaListSerializer  # Todos los datos completos
     queryset = Parcela.objects.all()
-    serializer_class = ParcelaUpdateSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('administracion', 'actualizar')]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        return [permissions.IsAuthenticated(), HasOperationPermission('administracion', 'ver')]
 
 
 

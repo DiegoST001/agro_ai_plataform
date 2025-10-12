@@ -85,15 +85,6 @@ agro_ai_platform/
 │   ├── views.py
 │   └── migrations/
 │       └── __init__.py
-├── sensors/                   # Sensor data module
-│   ├── __init__.py
-│   ├── admin.py
-│   ├── apps.py
-│   ├── models.py
-│   ├── tests.py
-│   ├── views.py
-│   └── migrations/
-│       └── __init__.py
 ├── ai_integration/            # AI integration module
 │   ├── __init__.py
 │   ├── admin.py

@@ -1,0 +1,109 @@
+
+// Asi deben llegar los datos desde el nodo maestro
+[
+  {
+    "parcela_id": 5,
+    "codigo_nodo_maestro": "NODE-001",
+    "last_seen": "2025-10-01T07:59:50Z",
+    "estado": "activo",  
+    "lat": "-13.53",  
+    "lng": "-70.65",  
+    "senal": "-70dBm",
+    "timestamp": "2025-10-01T08:00:00Z",
+    "lecturas": [
+      {
+        "nodo_codigo": "NODE-01",
+        "bateria": 95,
+        "last_seen": "2025-10-01T07:59:50Z",
+        "sensores": [
+          { "sensor": "temperatura", "valor": 22.5, "unidad": "°C" },
+          { "sensor": "humedad", "valor": 65.2, "unidad": "%" }
+        ]
+      },
+      {
+        "nodo_codigo": "NODE-02",
+        "bateria": 90,
+        "last_seen": "2025-10-01T07:59:50Z",
+        "sensores": [
+          { "sensor": "temperatura", "valor": 23.1, "unidad": "°C" }
+        ]
+      }
+    ]
+  },
+  {
+    "parcela_id": 5,
+    "codigo_nodo_maestro": "NODE-001",
+    "last_seen": "2025-10-01T07:59:50Z",
+    "estado": "activo",  
+    "senal": "-70dBm",
+    "lat": "-13.53",  
+    "lng": "-70.65",  
+    "timestamp": "2025-10-01T14:00:00Z",
+    "lecturas": [
+      {
+        "nodo_codigo": "NODE-01",
+        "bateria": 94,
+        "last_seen": "2025-10-01T14:59:50Z",
+        "sensores": [
+          { "sensor": "temperatura", "valor": 23.0, "unidad": "°C" },
+          { "sensor": "humedad", "valor": 66.0, "unidad": "%" }
+        ]
+      },
+      {
+        "nodo_codigo": "NODE-02",
+        "bateria": 89,
+        "last_seen": "2025-10-01T14:59:50Z",
+        "sensores": [
+          { "sensor": "temperatura", "valor": 23.5, "unidad": "°C" }
+        ]
+      }
+    ]
+  }
+]
+//Asi se deben guardar en la base de datos (sin datos del nodo maestro y sin datos de bateria)
+[
+  {
+    "parcela_id": 5,
+    "codigo_nodo_maestro": "NODE-001",
+    "timestamp": "2025-10-01T08:00:00Z",
+    "lecturas": [
+      {
+        "nodo_codigo": "NODE-01",
+        "last_seen": "2025-10-01T07:59:50Z",
+        "sensores": [
+          { "sensor": "temperatura", "valor": 22.5, "unidad": "°C" },
+          { "sensor": "humedad", "valor": 65.2, "unidad": "%" }
+        ]
+      },
+      {
+        "nodo_codigo": "NODE-02",
+        "last_seen": "2025-10-01T07:59:50Z",
+        "sensores": [
+          { "sensor": "temperatura", "valor": 23.1, "unidad": "°C" }
+        ]
+      }
+    ]
+  },
+  {
+    "parcela_id": 5,
+    "codigo_nodo_maestro": "NODE-001",
+    "timestamp": "2025-10-01T14:00:00Z",
+    "lecturas": [
+      {
+        "nodo_codigo": "NODE-01",
+        "last_seen": "2025-10-01T14:59:50Z",
+        "sensores": [
+          { "sensor": "temperatura", "valor": 23.0, "unidad": "°C" },
+          { "sensor": "humedad", "valor": 66.0, "unidad": "%" }
+        ]
+      },
+      {
+        "nodo_codigo": "NODE-02",
+        "last_seen": "2025-10-01T14:59:50Z",
+        "sensores": [
+          { "sensor": "temperatura", "valor": 23.5, "unidad": "°C" }
+        ]
+      }
+    ]
+  }
+]

@@ -1,8 +1,7 @@
 from django.db import models
 from parcels.models import Parcela
-from recommendations.models import Recommendation
 
-class Tarea(models.Model):
+class Task(models.Model):
     ESTADO_CHOICES = [
         ('pendiente', 'Pendiente'),
         ('en_progreso', 'En Progreso'),
@@ -11,7 +10,7 @@ class Tarea(models.Model):
     ]
 
     parcela = models.ForeignKey(Parcela, on_delete=models.CASCADE)
-    recomendacion = models.ForeignKey(Recommendation, null=True, blank=True, on_delete=models.SET_NULL, related_name='tareas_asociadas')
+    recomendacion = models.ForeignKey('recommendations.Recommendation', null=True, blank=True, on_delete=models.SET_NULL, related_name='tareas_asociadas')
     tipo = models.CharField(max_length=50)
     descripcion = models.TextField()
     fecha_programada = models.DateTimeField()

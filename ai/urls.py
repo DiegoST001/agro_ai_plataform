@@ -1,6 +1,11 @@
-from django.urls import path
-from .views import OllamaChatView
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import AIChatView, AIIntegrationViewSet
+
+router = DefaultRouter()
+router.register(r'config', AIIntegrationViewSet, basename='aiintegration')
 
 urlpatterns = [
-    path("ollama/chat/", OllamaChatView.as_view(), name="ollama-chat"),
+    path("chat/", AIChatView.as_view(), name="chat"),
+    path("", include(router.urls)),
 ]

@@ -7,6 +7,7 @@ from .models import Plan, ParcelaPlan
 from .serializers import PlanSerializer
 from parcels.models import Parcela
 from users.permissions import HasOperationPermission
+from .serializers import ParcelaPlanSerializer  # Asegúrate de que este serializer esté creado
 
 
 @extend_schema(tags=['Planes'], summary='Listar planes')
@@ -51,5 +52,25 @@ class ParcelaChangePlanView(views.APIView):
             estado='activo'
         )
         return Response({'detail': 'Plan actualizado.', 'parcela_id': parcela.id, 'plan_id': plan.id}, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    tags=['Admin'],
+    summary='Consultar el plan activo de una parcela',
+    description='Devuelve el plan activo asociado a la parcela indicada.',
+    responses=ParcelaPlanSerializer,
+)
+class ParcelaPlanDetailView(generics.RetrieveAPIView):
+    serializer_class = ParcelaPlanSerializer
+
+    def get_permissions(self):
+        return [
+            permissions.IsAuthenticated(),
+            HasOperationPermission('administracion', 'ver')
+        ]
+
+    def get_object(self):
+        parcela_id = self.kwargs.get('parcela_id')
+        return ParcelaPlan.objects.filter(parcela_id=parcela_id, estado='activo').first()
 
 # Create your views here.

@@ -1,0 +1,125 @@
+[
+  { "parcela_id": 5, "codigo_nodo_maestro": "NODE-MASTER-01", "timestamp": "2025-10-01T08:00:00Z", "lecturas": [...] },
+  { "parcela_id": 5, "codigo_nodo_maestro": "NODE-MASTER-01", "timestamp": "2025-10-01T14:00:00Z", "lecturas": [...] },
+  { "parcela_id": 5, "codigo_nodo_maestro": "NODE-MASTER-01", "timestamp": "2025-10-01T20:00:00Z", "lecturas": [...] },
+  { "parcela_id": 5, "codigo_nodo_maestro": "NODE-MASTER-01", "timestamp": "2025-10-02T08:00:00Z", "lecturas": [...] },
+  { "parcela_id": 5, "codigo_nodo_maestro": "NODE-MASTER-01", "timestamp": "2025-10-02T14:00:00Z", "lecturas": [...] },
+  { "parcela_id": 5, "codigo_nodo_maestro": "NODE-MASTER-01", "timestamp": "2025-10-02T20:00:00Z", "lecturas": [...] },
+  ...
+  { "parcela_id": 5, "codigo_nodo_maestro": "NODE-MASTER-01", "timestamp": "2025-10-07T20:00:00Z", "lecturas": [...] }
+]
+
+{
+  "parcela_id": 5,
+  "codigo_nodo_maestro": "NODE-MASTER-01",
+  "lecturas": [
+    { "timestamp": "2025-10-01T08:00:00Z", "nodo_codigo": "NODE-01", "sensor": "temperatura", "valor": 22.5 },
+    { "timestamp": "2025-10-01T14:00:00Z", "nodo_codigo": "NODE-01", "sensor": "temperatura", "valor": 23.1 },
+    { "timestamp": "2025-10-01T20:00:00Z", "nodo_codigo": "NODE-01", "sensor": "temperatura", "valor": 21.9 }
+  ]
+}
+
+
+{
+  "codigo": "NODE-MASTER-01",
+  "token": "abc123tokenxyz",
+  "parcela_id": 5,
+  "bateria": 3.74,
+  "señal": -70,
+  "nodos": [
+    { "codigo": "NODE-01", "lecturas": [
+        { "sensor": "temperatura", "valor": 22.5, "unidad": "°C" },
+        { "sensor": "humedad", "valor": 65.2, "unidad": "%" }
+    ] },
+    { "codigo": "NODE-02", "lecturas": [
+        { "sensor": "ph", "valor": 6.4, "unidad": "pH" }
+    ] }
+  ]
+}
+
+
+
+from datetime import datetime, timezone
+from rest_framework import permissions, status, views
+from rest_framework.response import Response
+from drf_spectacular.utils import extend_schema, OpenApiExample
+from .auth import NodeTokenAuthentication
+from .models import Node, NodoSecundario
+@extend_schema(
+    tags=['Ingesta'],
+    summary='Ingesta de datos desde nodo maestro',
+    examples=[
+        OpenApiExample(
+            'Payload ejemplo',
+            value={
+                "node_code": "NODE-001",
+                "battery": 82,
+                "signal": 3,
+                "lat": -13.52,
+                "lng": -71.97,
+                "secondary": [
+                    {"code":"SN-1","battery":70,"signal":2,"lat":-13.52,"lng":-71.971}
+                ],
+                "readings": [
+                    {"sensor_id":"S-1","collection":"lecturas_sensores","type":"HumedadSuelo","value":35.6,"unit":"%","timestamp":"2025-09-24T18:30:00Z"}
+                ]
+            }
+        )
+    ]
+)
+class NodeIngestView(views.APIView):
+    authentication_classes = [NodeTokenAuthentication]
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        # Autenticación por token de nodo
+        token = getattr(request, 'auth', None)
+        if not token or not getattr(request, 'node', None):
+            return Response({'detail': 'No autorizado'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        nodo: Node = request.node
+        payload = request.data or {}
+
+        # 1) Actualiza estado del nodo maestro
+        nodo.bateria = payload.get('battery', nodo.bateria)
+        nodo.senal = payload.get('signal', nodo.senal)
+        nodo.lat = payload.get('lat', nodo.lat)
+        nodo.lng = payload.get('lng', nodo.lng)
+        nodo.last_seen = datetime.now(timezone.utc)
+        nodo.save(update_fields=['bateria','senal','lat','lng','last_seen','updated_at'])
+
+        # 2) Actualiza/crea secundarios
+        for sn in payload.get('secondary', []):
+            sec, _ = NodoSecundario.objects.get_or_create(
+                codigo=sn.get('code'),
+                defaults={'maestro': nodo}
+            )
+            if sec.maestro_id != nodo.id:
+                sec.maestro = nodo
+            sec.bateria = sn.get('battery', sec.bateria)
+            sec.senal = sn.get('signal', sec.senal)
+            sec.lat = sn.get('lat', sec.lat)
+            sec.lng = sn.get('lng', sec.lng)
+            sec.last_seen = datetime.now(timezone.utc)
+            sec.save()
+
+        # 3) Inserta lecturas en Mongo
+        inserted = 0
+        for r in payload.get('readings', []):
+            collection = r.get('collection') or 'lecturas_sensores'
+            doc = {
+                'nodo_id': nodo.codigo,
+                'parcela_id': nodo.parcela_id,
+                'sensor_id': r.get('sensor_id'),
+                'sensor_tipo': r.get('type'),
+                'valor': r.get('value'),
+                'unidad': r.get('unit'),
+                'timestamp': r.get('timestamp') or datetime.now(timezone.utc),
+            }
+            readings_collection(collection).insert_one(doc)
+            inserted += 1
+
+            # Opcional: si mapeas sensor_id con tu modelo Sensor, puedes validar pertenencia
+            # Sensor.objects.filter(ext_sensor_id=doc['sensor_id']).exists()
+
+        return Response({'detail': 'OK', 'mongo_inserted': inserted}, status=status.HTTP_200_OK)
