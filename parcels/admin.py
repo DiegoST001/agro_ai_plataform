@@ -3,7 +3,24 @@ from .models import Parcela
 
 @admin.register(Parcela)
 class ParcelaAdmin(admin.ModelAdmin):
-    list_display = ('id', 'nombre', 'usuario', 'tamano_hectareas', 'ubicacion')
-    search_fields = ('nombre', 'tipo_cultivo')
-    list_filter = ('tipo_cultivo', 'usuario_id')
+    list_display = (
+        'id',
+        'nombre',
+        'usuario',
+        'cultivo',
+        'variedad',
+        'tamano_hectareas',
+        'ubicacion',
+    )
+    search_fields = (
+        'nombre',
+        'cultivo__nombre',
+        'variedad__nombre',
+        'usuario__username',
+    )
+    list_filter = (
+        'cultivo',
+        'variedad',
+        'usuario',
+    )
     ordering = ('id',)

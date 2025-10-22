@@ -73,3 +73,16 @@ class UserOperacionOverride(models.Model):
 
     def __str__(self):
         return f'{self.user_id}:{self.modulo_id}:{self.operacion_id} -> {"ALLOW" if self.allow else "DENY"}'
+
+class Prospecto(models.Model):
+    nombre_completo = models.CharField(max_length=128)
+    dni = models.CharField(max_length=16)
+    correo = models.EmailField()
+    telefono = models.CharField(max_length=32)
+    ubicacion_parcela = models.TextField()
+    descripcion_terreno = models.TextField()
+    fecha_solicitud = models.DateTimeField(auto_now_add=True)
+    estado = models.CharField(max_length=32, default='pendiente')  # pendiente, aprobado, rechazado
+
+    def __str__(self):
+        return f"{self.nombre_completo} ({self.correo})"

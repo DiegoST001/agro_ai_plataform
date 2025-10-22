@@ -10,15 +10,20 @@ from authentication.models import User
 from .serializers import (
     RolSerializer, ModuloSerializer, RolesOperacionesSerializer, UserRoleUpdateSerializer,
     UserOperacionOverrideSerializer, AdminUserListSerializer, AdminUserUpdateSerializer,
-    PerfilUsuarioSerializer, UserWithProfileSerializer, UserDetailSerializer
+    PerfilUsuarioSerializer, UserWithProfileSerializer, UserDetailSerializer, ProspectoSerializer
 )
 from .permissions import HasOperationPermission
 from rest_framework.views import APIView
+from .models import Prospecto
 
 @extend_schema(
     tags=['User'],
     summary='Obtener perfil de usuario por ID',
-    description='Devuelve los datos del perfil de un usuario específico según su ID. Solo accesible para administradores.',
+    description=(
+        "Devuelve los datos del perfil de un usuario específico según su ID.\n\n"
+        "**Permisos:** Solo administradores pueden acceder.\n\n"
+        "**Campos devueltos:** nombres, apellidos, teléfono, DNI, fecha de nacimiento, experiencia agrícola y foto de perfil."
+    ),
     responses={
         200: OpenApiExample(
             'Perfil de usuario',
@@ -51,7 +56,11 @@ class UserProfileView(View):
 @extend_schema(
     tags=['User'],
     summary='Actualizar perfil de usuario por ID',
-    description='Actualiza los datos del perfil de un usuario específico según su ID. Solo accesible para administradores.',
+    description=(
+        "Actualiza los datos del perfil de un usuario específico según su ID.\n\n"
+        "**Permisos:** Solo administradores pueden actualizar perfiles de otros usuarios.\n\n"
+        "Envía los campos a modificar en el cuerpo de la solicitud."
+    ),
     request=PerfilUsuarioSerializer,
     responses={
         200: OpenApiExample('Perfil actualizado', value={"message": "Perfil actualizado exitosamente."}),
@@ -74,7 +83,11 @@ class UpdateUserProfileView(View):
 @extend_schema(
     tags=['User'],
     summary='Listar roles de usuario',
-    description='Devuelve la lista de roles disponibles en el sistema.',
+    description=(
+        "Devuelve la lista de roles disponibles en el sistema.\n\n"
+        "Cada rol incluye su nombre y descripción.\n\n"
+        "Útil para asignar roles a usuarios o mostrar opciones en formularios."
+    ),
     responses={
         200: OpenApiExample(
             'Lista de roles',
@@ -94,12 +107,12 @@ class UserRolesView(View):
     tags=['User'],
     summary='Ver, crear o actualizar perfil del usuario autenticado',
     description=(
-        "## OJO: Cuando se crea el usuario el perfil también se crea automáticamente pero esta vacio por lo que no es necesario usar el post sino el PATCH o el PUT.\n\n"
         "Permite consultar, crear o actualizar el perfil del usuario autenticado.\n\n"
-        "- **GET**: Devuelve los datos del perfil del usuario autenticado.\n"
-        "- **POST**: Crea el perfil del usuario autenticado (si no existe).\n"
-        "- **PATCH**: Actualiza parcialmente los datos del perfil del usuario autenticado.\n"
-        "- **PUT**: Actualiza completamente todos los datos del perfil del usuario autenticado."
+        "- **GET:** Devuelve el perfil del usuario autenticado.\n"
+        "- **POST:** Crea el perfil si no existe (normalmente no se usa, el perfil se crea automáticamente).\n"
+        "- **PATCH:** Actualiza parcialmente el perfil.\n"
+        "- **PUT:** Actualiza completamente el perfil.\n\n"
+        "**Nota:** El perfil se crea vacío al crear el usuario, por lo que normalmente solo se usa PATCH o PUT para actualizar."
     ),
     request=PerfilUsuarioSerializer,
     responses=PerfilUsuarioSerializer,
@@ -162,7 +175,7 @@ class PerfilUsuarioView(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-@extend_schema(tags=['RBAC'], summary='Listar roles')
+@extend_schema(tags=['RBAC'], summary='Listar roles', description="Devuelve todos los roles del sistema. Solo administradores pueden acceder.")
 class RolViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Rol.objects.all().order_by('id')
     serializer_class = RolSerializer
@@ -170,7 +183,7 @@ class RolViewSet(viewsets.ReadOnlyModelViewSet):
     def get_permissions(self):
         return [permissions.IsAuthenticated(), HasOperationPermission('administracion', 'ver')]
 
-@extend_schema(tags=['RBAC'], summary='Listar módulos')
+@extend_schema(tags=['RBAC'], summary='Listar módulos', description="Devuelve todos los módulos del sistema. Solo administradores pueden acceder.")
 class ModuloViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Modulo.objects.all().order_by('id')
     serializer_class = ModuloSerializer
@@ -179,10 +192,26 @@ class ModuloViewSet(viewsets.ReadOnlyModelViewSet):
         return [permissions.IsAuthenticated(), HasOperationPermission('administracion', 'ver')]
 
 @extend_schema_view(
-    list=extend_schema(tags=['RBAC'], summary='Listar permisos por rol/módulo'),
-    create=extend_schema(tags=['RBAC'], summary='Conceder permiso a un rol'),
-    destroy=extend_schema(tags=['RBAC'], summary='Revocar permiso (por id)'),
-    retrieve=extend_schema(tags=['RBAC'], summary='Detalle de permiso por id'),  # <-- Agregado
+    list=extend_schema(
+        tags=['RBAC'],
+        summary='Listar permisos por rol/módulo',
+        description="Devuelve los permisos asignados a cada rol y módulo. Solo administradores pueden consultar."
+    ),
+    create=extend_schema(
+        tags=['RBAC'],
+        summary='Conceder permiso a un rol',
+        description="Permite asignar un permiso específico a un rol en un módulo. Solo administradores pueden modificar."
+    ),
+    destroy=extend_schema(
+        tags=['RBAC'],
+        summary='Revocar permiso (por id)',
+        description="Elimina un permiso asignado a un rol. Solo administradores pueden modificar."
+    ),
+    retrieve=extend_schema(
+        tags=['RBAC'],
+        summary='Detalle de permiso por id',
+        description="Devuelve el detalle de un permiso específico por id. Solo administradores pueden consultar."
+    ),
 )
 class RolesOperacionesViewSet(viewsets.ModelViewSet):
     queryset = RolesOperaciones.objects.select_related('rol', 'modulo', 'operacion').all()
@@ -198,7 +227,16 @@ class RolesOperacionesViewSet(viewsets.ModelViewSet):
             base.append(HasOperationPermission('administracion', 'actualizar'))
         return base
 
-@extend_schema(tags=['RBAC'], summary='Cambiar rol de un usuario', request=UserRoleUpdateSerializer)
+@extend_schema(
+    tags=['RBAC'],
+    summary='Cambiar rol de un usuario',
+    description=(
+        "Permite cambiar el rol de un usuario existente.\n\n"
+        "**Permisos:** Solo administradores pueden cambiar roles.\n"
+        "Envía el nuevo rol en el cuerpo de la solicitud."
+    ),
+    request=UserRoleUpdateSerializer
+)
 class UserRoleUpdateView(views.APIView):
     def get_permissions(self):
         return [permissions.IsAuthenticated(), HasOperationPermission('usuarios', 'actualizar')]
@@ -215,12 +253,36 @@ class UserRoleUpdateView(views.APIView):
         return Response({'detail': 'Rol actualizado', 'user_id': user.id, 'rol_id': user.rol_id})
 
 @extend_schema_view(
-    list=extend_schema(tags=['RBAC'], summary='Listar overrides'),
-    create=extend_schema(tags=['RBAC'], summary='Crear override'),
-    retrieve=extend_schema(tags=['RBAC'], summary='Detalle override'),
-    update=extend_schema(tags=['RBAC'], summary='Actualizar override'),
-    partial_update=extend_schema(tags=['RBAC'], summary='Actualizar parcialmente override'),
-    destroy=extend_schema(tags=['RBAC'], summary='Eliminar override'),
+    list=extend_schema(
+        tags=['RBAC'],
+        summary='Listar overrides',
+        description="Devuelve la lista de overrides de permisos por usuario. Solo administradores pueden consultar."
+    ),
+    create=extend_schema(
+        tags=['RBAC'],
+        summary='Crear override',
+        description="Permite crear un override de permisos para un usuario. Solo administradores pueden modificar."
+    ),
+    retrieve=extend_schema(
+        tags=['RBAC'],
+        summary='Detalle override',
+        description="Devuelve el detalle de un override de permisos por usuario. Solo administradores pueden consultar."
+    ),
+    update=extend_schema(
+        tags=['RBAC'],
+        summary='Actualizar override',
+        description="Actualiza un override de permisos para un usuario. Solo administradores pueden modificar."
+    ),
+    partial_update=extend_schema(
+        tags=['RBAC'],
+        summary='Actualizar parcialmente override',
+        description="Actualiza parcialmente un override de permisos para un usuario. Solo administradores pueden modificar."
+    ),
+    destroy=extend_schema(
+        tags=['RBAC'],
+        summary='Eliminar override',
+        description="Elimina un override de permisos para un usuario. Solo administradores pueden modificar."
+    ),
 )
 class UserOperacionOverrideViewSet(viewsets.ModelViewSet):
     queryset = UserOperacionOverride.objects.select_related('user', 'modulo', 'operacion').all()
@@ -236,13 +298,21 @@ class UserOperacionOverrideViewSet(viewsets.ModelViewSet):
         return base
 
 @extend_schema_view(
-    get=extend_schema(tags=['Admin'], summary='Listar usuarios', parameters=[
-        OpenApiParameter(name='rol', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY),
-        OpenApiParameter(name='is_active', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY),
-        OpenApiParameter(name='search', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
-        OpenApiParameter(name='ordering', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
-    ],
-    responses=AdminUserListSerializer(many=True),
+    get=extend_schema(
+        tags=['Admin'],
+        summary='Listar usuarios',
+        description=(
+            "Devuelve la lista de usuarios registrados en el sistema.\n\n"
+            "Permite filtrar por rol, estado activo, búsqueda y ordenamiento.\n"
+            "**Permisos:** Solo administradores pueden acceder."
+        ),
+        parameters=[
+            OpenApiParameter(name='rol', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description="Filtrar por rol"),
+            OpenApiParameter(name='is_active', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description="Filtrar por estado activo"),
+            OpenApiParameter(name='search', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description="Buscar por username o email"),
+            OpenApiParameter(name='ordering', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description="Ordenar por campo"),
+        ],
+        responses=AdminUserListSerializer(many=True),
     )
 )
 class AdminUserListView(generics.ListAPIView):
@@ -257,9 +327,26 @@ class AdminUserListView(generics.ListAPIView):
         return [permissions.IsAuthenticated(), HasOperationPermission('administracion', 'ver')]
 
 @extend_schema_view(
-    get=extend_schema(tags=['Admin'], summary='Detalle de usuario', responses=AdminUserListSerializer),
-    patch=extend_schema(tags=['Admin'], summary='Actualizar usuario (email, activo, rol)', request=AdminUserUpdateSerializer, responses=AdminUserListSerializer),
-    put=extend_schema(tags=['Admin'], summary='Actualizar usuario (email, activo, rol)', request=AdminUserUpdateSerializer, responses=AdminUserListSerializer),
+    get=extend_schema(
+        tags=['Admin'],
+        summary='Detalle de usuario',
+        description="Devuelve el detalle de un usuario específico. Solo administradores pueden consultar.",
+        responses=AdminUserListSerializer,
+    ),
+    patch=extend_schema(
+        tags=['Admin'],
+        summary='Actualizar usuario (email, activo, rol)',
+        description="Actualiza los datos básicos de un usuario (email, estado activo, rol). Solo administradores pueden modificar.",
+        request=AdminUserUpdateSerializer,
+        responses=AdminUserListSerializer,
+    ),
+    put=extend_schema(
+        tags=['Admin'],
+        summary='Actualizar usuario (email, activo, rol)',
+        description="Actualiza completamente los datos básicos de un usuario. Solo administradores pueden modificar.",
+        request=AdminUserUpdateSerializer,
+        responses=AdminUserListSerializer,
+    ),
 )
 class AdminUserDetailView(generics.RetrieveAPIView):
     queryset = User.objects.all()
@@ -269,3 +356,89 @@ class AdminUserDetailView(generics.RetrieveAPIView):
             permissions.IsAuthenticated(),
             HasOperationPermission('administracion', 'ver')
         ]
+
+@extend_schema(
+    tags=['Prospectos'],
+    summary='Listar prospectos',
+    description=(
+        "Devuelve la lista de prospectos registrados en el sistema.\n\n"
+        "**Permisos:** Solo administradores pueden acceder."
+    ),
+    responses=ProspectoSerializer(many=True)
+)
+class ProspectoListView(generics.ListAPIView):
+    queryset = Prospecto.objects.all()
+    serializer_class = ProspectoSerializer
+    permission_classes = [permissions.IsAdminUser]  # Solo admin
+
+@extend_schema(
+    tags=['Prospectos'],
+    summary='Detalle de prospecto',
+    description=(
+        "Devuelve los datos de un prospecto específico por ID.\n\n"
+        "**Permisos:** Solo administradores pueden acceder."
+    ),
+    responses=ProspectoSerializer
+)
+class ProspectoDetailView(generics.RetrieveAPIView):
+    queryset = Prospecto.objects.all()
+    serializer_class = ProspectoSerializer
+    permission_classes = [permissions.IsAdminUser]  # Solo admin
+
+@extend_schema(
+    tags=['Prospectos'],
+    summary='Aceptar prospecto y crear agricultor',
+    description=(
+        "Acepta un prospecto y crea un usuario agricultor con los datos del prospecto.\n\n"
+        "Permite modificar el correo y asignar un username y contraseña.\n"
+        "**Permisos:** Solo administradores pueden acceder."
+    ),
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "username": {"type": "string", "example": "nuevo_usuario"},
+                "password": {"type": "string", "example": "contraseña_segura"},
+                "correo": {"type": "string", "example": "nuevo@email.com"},
+            },
+            "required": ["username", "password"]
+        }
+    },
+    responses={
+        201: OpenApiExample('Agricultor creado', value={"msg": "Agricultor creado"}),
+        400: OpenApiExample('Error', value={"error": "Username ya existe"})
+    }
+)
+class ProspectoAceptarView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+    def post(self, request, pk):
+        prospecto = Prospecto.objects.get(pk=pk)
+        username = request.data.get('username')
+        password = request.data.get('password')
+        correo = request.data.get('correo', prospecto.correo)
+
+        # Validaciones
+        if User.objects.filter(username=username).exists():
+            return Response({'error': 'Username ya existe'}, status=status.HTTP_400_BAD_REQUEST)
+        if User.objects.filter(email=correo).exists():
+            return Response({'error': 'Correo ya existe'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Crear usuario agricultor
+        rol_agricultor = Rol.objects.get(nombre='agricultor')
+        user = User.objects.create_user(username=username, email=correo, password=password, is_active=True)
+        user.rol = rol_agricultor
+        user.save()
+
+        # Crear perfil
+        PerfilUsuario.objects.create(
+            usuario=user,
+            nombres=prospecto.nombre_completo,
+            telefono=prospecto.telefono,
+            dni=prospecto.dni,
+        )
+
+        # Marcar prospecto como aprobado
+        prospecto.estado = 'aprobado'
+        prospecto.save()
+
+        return Response({'msg': 'Agricultor creado'}, status=status.HTTP_201_CREATED)

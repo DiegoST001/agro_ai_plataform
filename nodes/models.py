@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.db import models
 from parcels.models import Parcela
+from django.utils import timezone
+from datetime import timedelta
 import secrets
 
 ESTADO_CHOICES = [('activo', 'Activo'), ('inactivo', 'Inactivo')]
@@ -28,10 +30,27 @@ class Node(models.Model):  # Nodo Maestro
             self.codigo = f"M-{token}-{self.id}"
             super().save(update_fields=['codigo'])
 
+        # Crear token de nodo automático al crear el Node (si no existe)
+        if creating:
+            from django.db import IntegrityError
+            try:
+                # genera key larga y única
+                key = secrets.token_hex(32)
+                # TokenNodo está definido más abajo en el mismo archivo
+                TokenNodo.objects.create(
+                    nodo=self,
+                    key=key,
+                    fecha_expiracion=timezone.now() + timedelta(days=30),
+                    estado='valido'
+                )
+            except IntegrityError:
+                # en caso de colisión rara, omitir (o reintentar según necesidad)
+                pass
+
 
 class NodoSecundario(models.Model):
     codigo = models.CharField(max_length=50, unique=True, blank=True)
-    maestro = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='inactivo')
+    maestro = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='secundarios')
     estado = models.CharField(max_length=10, choices=ESTADO_CHOICES, default='inactivo')
     bateria = models.IntegerField(null=True, blank=True)  # % batería del nodo secundario
     last_seen = models.DateTimeField(null=True, blank=True)

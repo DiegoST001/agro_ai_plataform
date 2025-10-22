@@ -4,22 +4,21 @@ from rest_framework import generics, permissions, status, views
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiExample
 from .auth import NodeTokenAuthentication
-from .models import Node, NodoSecundario
-from .mongo import db  # Importa la conexión a MongoDB
+from .models import Node, NodoSecundario, Parcela
+from .mongo import db
 from .serializers import NodeSerializer, NodoSecundarioSerializer
+# reemplazado: import directo de helpers de permisos del app nodes (reusa users.permissions)
+from .permissions import tiene_permiso, role_name, HasOperationPermission, OwnsObjectOrAdmin
+from rest_framework.exceptions import PermissionDenied, NotFound
+
 
 def readings_collection(name):
-    """Devuelve la colección de lecturas en MongoDB."""
     return db[name]
 
 @extend_schema(
     tags=['Ingesta'],
     summary='Ingesta de datos desde nodo maestro',
-    description=(
-        "Recibe datos de sensores enviados por el nodo maestro y los almacena en MongoDB. "
-        "El payload puede incluir información opcional como batería, latitud, longitud, estado y señal, además de los datos requeridos. "
-        "Este endpoint es usado por los dispositivos físicos para enviar telemetría."
-    ),
+    description="Recibe datos de sensores enviados por el nodo maestro y los almacena en MongoDB. El payload puede incluir información opcional.",
     request={
         "type": "object",
         "properties": {
@@ -99,76 +98,178 @@ class NodeIngestView(views.APIView):
 
     def post(self, request):
         payload = request.data or {}
-
-        # Guarda solo lo esencial en MongoDB
         mongo_doc = {
             "parcela_id": payload.get("parcela_id"),
             "codigo_nodo_maestro": payload.get("codigo_nodo_maestro"),
             "timestamp": payload.get("timestamp"),
             "lecturas": []
         }
+        # recopilar códigos presentes en el payload
+        present_codes = set()
         for lectura in payload.get("lecturas", []):
+            codigo = lectura.get("nodo_codigo")
             lectura_doc = {
-                "nodo_codigo": lectura.get("nodo_codigo"),
+                "nodo_codigo": codigo,
                 "last_seen": lectura.get("last_seen"),
-                "sensores": lectura.get("sensores", [])
+                "sensores": lectura.get("sensores", []),
             }
+            if "bateria" in lectura:
+                lectura_doc["bateria"] = lectura.get("bateria")
             mongo_doc["lecturas"].append(lectura_doc)
+            if codigo:
+                present_codes.add(codigo)
         readings_collection("lecturas_sensores").insert_one(mongo_doc)
 
-        # Actualiza estado y last_seen del nodo maestro en la base relacional
+        # actualizar nodo maestro (si existe) y guardar campos que vengan en el payload
         try:
             node = Node.objects.get(codigo=payload.get("codigo_nodo_maestro"))
-            node.last_seen = timezone.now()
-            node.estado = "activo"
-            node.save(update_fields=["last_seen", "estado"])
+            now = timezone.now()
+            node.last_seen = now
+            # marcar activo por defecto al recibir ingestión, salvo que el payload especifique otro estado
+            node.estado = payload.get("estado", "activo")
+            update_fields = ["last_seen", "estado"]
+
+            if "bateria" in payload and payload.get("bateria") is not None:
+                try:
+                    node.bateria = int(payload.get("bateria"))
+                    update_fields.append("bateria")
+                except (ValueError, TypeError):
+                    pass
+
+            if "senal" in payload and payload.get("senal") is not None:
+                try:
+                    node.senal = int(payload.get("senal"))
+                    update_fields.append("senal")
+                except (ValueError, TypeError):
+                    pass
+
+            if "lat" in payload and payload.get("lat") is not None:
+                node.lat = payload.get("lat")
+                update_fields.append("lat")
+            if "lng" in payload and payload.get("lng") is not None:
+                node.lng = payload.get("lng")
+                update_fields.append("lng")
+
+            node.save(update_fields=list(dict.fromkeys(update_fields)))
         except Node.DoesNotExist:
-            pass
+            node = None
 
-        # Actualiza estado y last_seen de los nodos secundarios en la base relacional
+        # actualizar nodos secundarios presentes y marcar como inactivos los ausentes
+        # primero actualizar los que vienen en el payload
         for lectura in payload.get("lecturas", []):
+            codigo_sec = lectura.get("nodo_codigo")
+            if not codigo_sec:
+                continue
             try:
-                nodo_sec = NodoSecundario.objects.get(codigo=lectura.get("nodo_codigo"))
-                nodo_sec.last_seen = timezone.now()
-                nodo_sec.estado = "activo"
-                nodo_sec.save(update_fields=["last_seen", "estado"])
+                nodo_sec = NodoSecundario.objects.get(codigo=codigo_sec)
+                changed_fields = []
+                # always update last_seen if provided
+                if lectura.get("last_seen") is not None:
+                    try:
+                        nodo_sec.last_seen = lectura.get("last_seen")
+                        changed_fields.append("last_seen")
+                    except Exception:
+                        pass
+                # marcar activo por defecto si aparece en el payload (a menos que venga otro estado)
+                estado_val = lectura.get("estado", "activo")
+                if estado_val is not None:
+                    nodo_sec.estado = estado_val
+                    changed_fields.append("estado")
+                # batería (acepta 0)
+                if "bateria" in lectura and lectura.get("bateria") is not None:
+                    try:
+                        nodo_sec.bateria = int(lectura.get("bateria"))
+                        changed_fields.append("bateria")
+                    except (ValueError, TypeError):
+                        pass
+                if changed_fields:
+                    nodo_sec.save(update_fields=list(dict.fromkeys(changed_fields)))
             except NodoSecundario.DoesNotExist:
-                pass
+                continue
 
-        return Response({'detail': 'OK'}, status=status.HTTP_200_OK)
+        # si conocemos el maestro, marcar como 'inactivo' los secundarios de ese maestro
+        # cuyo codigo NO esté en present_codes
+        if node is not None:
+            qs_absent = NodoSecundario.objects.filter(maestro=node)
+            if present_codes:
+                qs_absent = qs_absent.exclude(codigo__in=list(present_codes))
+            # actualizar solo los que realmente cambien para evitar write churn
+            qs_absent.update(estado="inactivo")
+
+        return Response({"detail": "OK"}, status=status.HTTP_200_OK)
 
 @extend_schema(
     tags=['Nodos'],
     summary='Listar nodos maestros de una parcela',
-    description='Devuelve todos los nodos maestros asociados a una parcela específica. Útil para administración y visualización por parcela.',
+    description='Devuelve todos los nodos maestros asociados a una parcela específica.',
 )
 class NodoMasterListView(generics.ListAPIView):
     serializer_class = NodeSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver')]
 
     def get_queryset(self):
+        user = self.request.user
         parcela_id = self.kwargs.get('parcela_id')
-        return Node.objects.filter(parcela_id=parcela_id)
+
+        # verificar existencia de parcela -> 404 si no existe
+        try:
+            parcela = Parcela.objects.get(id=parcela_id)
+        except Parcela.DoesNotExist:
+            raise NotFound(detail="Parcela no existe.")
+
+        # permiso de módulo
+        if not tiene_permiso(user, 'nodos', 'ver'):
+            raise PermissionDenied(detail="No tienes permiso para ver nodos.")
+
+        # admin puede ver todo; agricultor solo sus parcelas
+        if role_name(user) in ['superadmin', 'administrador']:
+            return Node.objects.filter(parcela_id=parcela_id)
+        if parcela.usuario == user:
+            return Node.objects.filter(parcela_id=parcela_id)
+
+        raise PermissionDenied(detail="No tienes permiso para ver los nodos de esta parcela.")
 
 @extend_schema(
     tags=['Nodos'],
     summary='Listar nodos secundarios de un nodo maestro',
-    description='Devuelve todos los nodos secundarios asociados a un nodo maestro específico. Útil para ver la red de sensores de cada nodo maestro.',
+    description='Devuelve todos los nodos secundarios asociados a un nodo maestro específico.',
 )
 class NodoSecundarioListView(generics.ListAPIView):
     serializer_class = NodoSecundarioSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver')]
 
     def get_queryset(self):
+        user = self.request.user
         nodo_master_id = self.kwargs.get('nodo_master_id')
-        return NodoSecundario.objects.filter(maestro_id=nodo_master_id)
 
-from drf_spectacular.utils import extend_schema
+        # comprobar existencia del maestro -> 404
+        try:
+            nodo_master = Node.objects.select_related('parcela').get(id=nodo_master_id)
+        except Node.DoesNotExist:
+            raise NotFound(detail="Nodo maestro no existe.")
+
+        # permiso de módulo
+        if not tiene_permiso(user, 'nodos', 'ver'):
+            raise PermissionDenied(detail="No tienes permiso para ver nodos.")
+
+        # admin puede ver siempre
+        if role_name(user) in ['superadmin', 'administrador']:
+            return NodoSecundario.objects.filter(maestro_id=nodo_master_id)
+
+        # propietario de la parcela puede ver
+        if getattr(nodo_master.parcela, 'usuario', None) == user:
+            return NodoSecundario.objects.filter(maestro_id=nodo_master_id)
+
+        raise PermissionDenied(detail="No tienes permiso para ver los nodos secundarios de este nodo maestro.")
 
 @extend_schema(
     tags=['Nodos'],
     summary='Crear nodo maestro para una parcela',
-    description='Permite crear un nodo maestro y asociarlo a una parcela. El código del nodo se genera automáticamente y es único.',
+    description='Permite crear un nodo maestro y asociarlo a una parcela. El código se genera automáticamente.',
     request=NodeSerializer,
     responses=NodeSerializer,
     examples=[
@@ -188,31 +289,49 @@ from drf_spectacular.utils import extend_schema
 )
 class NodeCreateView(generics.CreateAPIView):
     serializer_class = NodeSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'crear')]
 
     def perform_create(self, serializer):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'crear'):
+            raise PermissionDenied("No tienes permiso para crear nodos.")
         parcela_id = self.kwargs.get('parcela_id')
+        # verificar existencia de parcela -> 404
+        try:
+            parcela = Parcela.objects.get(id=parcela_id)
+        except Parcela.DoesNotExist:
+            raise NotFound(detail="Parcela no existe.")
+        if role_name(user) == 'agricultor' and parcela.usuario != user:
+            raise PermissionDenied("No puedes crear nodos en parcelas que no son tuyas.")
         serializer.save(parcela_id=parcela_id)
 
 @extend_schema(
     tags=['Nodos'],
     summary='Actualizar nodo maestro',
-    description='Permite actualizar los datos de un nodo maestro existente. No se puede modificar el código generado automáticamente.',
+    description='Permite actualizar los datos de un nodo maestro existente.',
     request=NodeSerializer,
     responses=NodeSerializer,
 )
 class NodeUpdateView(generics.UpdateAPIView):
     serializer_class = NodeSerializer
-    queryset = Node.objects.all()
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsObjectOrAdmin()]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'actualizar'):
+            raise PermissionDenied(detail="No tienes permiso para actualizar nodos.")
+        if role_name(user) == 'agricultor':
+            return Node.objects.filter(parcela__usuario=user)
+        return Node.objects.all()
 
 @extend_schema(
     tags=['Nodos'],
     summary='Crear nodo secundario para un nodo maestro',
-    description=(
-        "Permite crear un nodo secundario asociado a un nodo maestro específico. "
-        "El código del nodo secundario se genera automáticamente y es único, incluyendo el código del maestro."
-    ),
+    description='Permite crear un nodo secundario asociado a un nodo maestro específico.',
     request=NodoSecundarioSerializer,
     responses=NodoSecundarioSerializer,
     examples=[
@@ -229,36 +348,162 @@ class NodeUpdateView(generics.UpdateAPIView):
 )
 class NodoSecundarioCreateView(generics.CreateAPIView):
     serializer_class = NodoSecundarioSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'crear')]
 
     def perform_create(self, serializer):
+        user = self.request.user
         maestro_id = self.kwargs.get('nodo_master_id')
-        serializer.save(maestro_id=maestro_id)
+        try:
+            nodo_master = Node.objects.select_related('parcela').get(id=maestro_id)
+        except Node.DoesNotExist:
+            raise NotFound(detail="Nodo maestro no existe.")
+        # permiso de módulo
+        if not tiene_permiso(user, 'nodos', 'crear'):
+            raise PermissionDenied(detail="No tienes permiso para crear nodos secundarios.")
+        if role_name(user) in ['superadmin', 'administrador'] or getattr(nodo_master.parcela, 'usuario', None) == user:
+            serializer.save(maestro_id=maestro_id)
+            return
+        raise PermissionDenied(detail="No tienes permiso para crear nodos secundarios en este nodo maestro.")
 
 @extend_schema(
     tags=['Nodos'],
     summary='Listar todos los nodos maestros',
-    description='Devuelve todos los nodos maestros registrados en el sistema. Útil para administración general.',
+    description='Devuelve todos los nodos maestros registrados en el sistema.',
 )
 class NodeListView(generics.ListAPIView):
     serializer_class = NodeSerializer
-    queryset = Node.objects.all()
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver')]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'ver'):
+            raise PermissionDenied(detail="No tienes permiso para ver nodos.")
+        if role_name(user) == 'agricultor':
+            parcelas = Parcela.objects.filter(usuario=user)
+            return Node.objects.filter(parcela__in=parcelas)
+        return Node.objects.all()
 
 @extend_schema(
     tags=['Nodos'],
     summary='Detalle de nodo maestro',
-    description=(
-        "Devuelve los datos completos de un nodo maestro, incluyendo sus nodos secundarios asociados. "
-        "Ideal para ver la configuración y estado de toda la red de sensores de un nodo maestro."
-    ),
+    description='Devuelve los datos completos de un nodo maestro, incluyendo sus nodos secundarios asociados.',
 )
 class NodeDetailView(generics.RetrieveAPIView):
     serializer_class = NodeSerializer
-    queryset = Node.objects.all()
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver'), OwnsObjectOrAdmin()]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'ver'):
+            raise PermissionDenied(detail="No tienes permiso para ver nodos.")
+        if role_name(user) in ['superadmin', 'administrador']:
+            return Node.objects.all()
+        return Node.objects.filter(parcela__usuario=user)
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx['include_secundarios'] = True
         return ctx
+
+@extend_schema(
+    tags=['Nodos'],
+    summary='Eliminar nodo maestro',
+    description='Permite eliminar un nodo maestro existente.',
+)
+class NodeDeleteView(generics.DestroyAPIView):
+    serializer_class = NodeSerializer
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'eliminar'), OwnsObjectOrAdmin()]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'eliminar'):
+            raise PermissionDenied(detail="No tienes permiso para eliminar nodos.")
+        if role_name(user) == 'agricultor':
+            return Node.objects.filter(parcela__usuario=user)
+        return Node.objects.all()
+
+@extend_schema(
+    tags=['Nodos'],
+    summary='Eliminar nodo secundario',
+    description='Permite eliminar un nodo secundario existente.',
+)
+class NodoSecundarioDeleteView(generics.DestroyAPIView):
+    serializer_class = NodoSecundarioSerializer
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'eliminar'), OwnsObjectOrAdmin()]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'eliminar'):
+            raise PermissionDenied(detail="No tienes permiso para eliminar nodos secundarios.")
+        if role_name(user) == 'agricultor':
+            return NodoSecundario.objects.filter(maestro__parcela__usuario=user)
+        return NodoSecundario.objects.all()
+
+@extend_schema(
+    tags=['Nodos'],
+    summary='Listar todos los nodos secundarios',
+    description='Devuelve todos los nodos secundarios registrados en el sistema.',
+)
+class NodoSecundarioListAllView(generics.ListAPIView):
+    serializer_class = NodoSecundarioSerializer
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver')]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'ver'):
+            raise PermissionDenied(detail="No tienes permiso para ver nodos secundarios.")
+        if role_name(user) == 'agricultor':
+            return NodoSecundario.objects.filter(maestro__parcela__usuario=user)
+        return NodoSecundario.objects.all()
+
+@extend_schema(
+    tags=['Nodos'],
+    summary='Detalle de nodo secundario',
+    description='Devuelve los datos completos de un nodo secundario.',
+)
+class NodoSecundarioDetailView(generics.RetrieveAPIView):
+    serializer_class = NodoSecundarioSerializer
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver'), OwnsObjectOrAdmin()]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'ver'):
+            raise PermissionDenied(detail="No tienes permiso para ver nodos secundarios.")
+        if role_name(user) in ['superadmin', 'administrador']:
+            return NodoSecundario.objects.all()
+        return NodoSecundario.objects.filter(maestro__parcela__usuario=user)
+
+@extend_schema(
+    tags=['Nodos'],
+    summary='Actualizar nodo secundario',
+    description='Permite actualizar los datos de un nodo secundario existente.',
+    request=NodoSecundarioSerializer,
+    responses=NodoSecundarioSerializer,
+)
+class NodoSecundarioUpdateView(generics.UpdateAPIView):
+    serializer_class = NodoSecundarioSerializer
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsObjectOrAdmin()]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'nodos', 'actualizar'):
+            raise PermissionDenied(detail="No tienes permiso para actualizar nodos secundarios.")
+        if role_name(user) == 'agricultor':
+            return NodoSecundario.objects.filter(maestro__parcela__usuario=user)
+        return NodoSecundario.objects.all()

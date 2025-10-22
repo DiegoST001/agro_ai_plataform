@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Rol, Modulo, Operacion, RolesOperaciones, UserOperacionOverride, PerfilUsuario
 from authentication.models import User
+from .models import Prospecto
 
 class RolSerializer(serializers.ModelSerializer):
     class Meta:
@@ -97,3 +98,8 @@ class UserDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'is_active', 'rol', 'date_joined', 'profile'
         ]
+
+class ProspectoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Prospecto
+        fields = '__all__'

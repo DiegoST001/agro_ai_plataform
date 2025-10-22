@@ -5,35 +5,118 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'agro_ai_platform.settings')
 django.setup()
 from datetime import datetime, timezone
 from django.conf import settings
-from users.models import Rol, Modulo, Operacion, RolesOperaciones, PerfilUsuario
+from users.models import Rol, Modulo, Operacion, RolesOperaciones, PerfilUsuario, UserOperacionOverride, Prospecto
 from plans.models import Plan
 from authentication.models import User
-from parcels.models import Parcela
+from parcels.models import Parcela, Cultivo, Variedad
 from recommendations.models import Recommendation
 from rest_framework.authtoken.models import Token
 from nodes.models import Node, NodoSecundario
 
-# Elimina perfiles y parcelas previos
+# Elimina todos los registros de las tablas principales (orden seguro por FK)
+print("Eliminando datos previos...")
+
+# 1. Elimina perfiles y overrides relacionados a usuarios
 PerfilUsuario.objects.all().delete()
+UserOperacionOverride.objects.all().delete()
+
+# 2. Elimina tokens
+Token.objects.all().delete()
+
+# 3. Elimina recomendaciones, nodos, parcelas, cultivos, variedades
+Recommendation.objects.all().delete()
+NodoSecundario.objects.all().delete()
+Node.objects.all().delete()
 Parcela.objects.all().delete()
+Cultivo.objects.all().delete()
+Variedad.objects.all().delete()
+
+# 4. Elimina permisos RBAC y prospectos
+RolesOperaciones.objects.all().delete()
+Operacion.objects.all().delete()
+Modulo.objects.all().delete()
+Plan.objects.all().delete()
+Prospecto.objects.all().delete()
+
+# 5. Elimina usuarios (excepto superusuario si lo deseas)
+User.objects.all().delete()
+
+# 6. Finalmente elimina roles
+Rol.objects.all().delete()
+
+print("Datos previos eliminados.")
+
+# Crea cultivos base
+papaya = Cultivo.objects.get_or_create(nombre="Papaya")[0]
+palta = Cultivo.objects.get_or_create(nombre="Palta")[0]
+maiz = Cultivo.objects.get_or_create(nombre="Maíz")[0]
+mango = Cultivo.objects.get_or_create(nombre="Mango")[0]
+uva = Cultivo.objects.get_or_create(nombre="Uva")[0]
+platano = Cultivo.objects.get_or_create(nombre="Plátano")[0]
+tomate = Cultivo.objects.get_or_create(nombre="Tomate")[0]
+
+# Variedades por cultivo (múltiples entradas)
+# Palta
+palta_hass = Variedad.objects.get_or_create(cultivo=palta, nombre="Hass")[0]
+palta_fuerte = Variedad.objects.get_or_create(cultivo=palta, nombre="Fuerte")[0]
+palta_reed = Variedad.objects.get_or_create(cultivo=palta, nombre="Reed")[0]
+palta_booth = Variedad.objects.get_or_create(cultivo=palta, nombre="Booth")[0]
+
+# Papaya
+papaya_red = Variedad.objects.get_or_create(cultivo=papaya, nombre="Red Lady")[0]
+papaya_maradol = Variedad.objects.get_or_create(cultivo=papaya, nombre="Maradol")[0]
+papaya_sunrise = Variedad.objects.get_or_create(cultivo=papaya, nombre="Sunrise")[0]
+
+# Maíz
+maiz_blanco = Variedad.objects.get_or_create(cultivo=maiz, nombre="Blanco")[0]
+maiz_amarillo = Variedad.objects.get_or_create(cultivo=maiz, nombre="Amarillo")[0]
+maiz_dulce = Variedad.objects.get_or_create(cultivo=maiz, nombre="Dulce")[0]
+maiz_choclo = Variedad.objects.get_or_create(cultivo=maiz, nombre="Choclo")[0]
+
+# Mango
+mango_tommy = Variedad.objects.get_or_create(cultivo=mango, nombre="Tommy Atkins")[0]
+mango_kent = Variedad.objects.get_or_create(cultivo=mango, nombre="Kent")[0]
+mango_haden = Variedad.objects.get_or_create(cultivo=mango, nombre="Haden")[0]
+mango_ataulfo = Variedad.objects.get_or_create(cultivo=mango, nombre="Ataulfo")[0]
+
+# Uva
+uva_red = Variedad.objects.get_or_create(cultivo=uva, nombre="Red Globe")[0]
+uva_thompson = Variedad.objects.get_or_create(cultivo=uva, nombre="Thompson Seedless")[0]
+uva_concord = Variedad.objects.get_or_create(cultivo=uva, nombre="Concord")[0]
+uva_flame = Variedad.objects.get_or_create(cultivo=uva, nombre="Flame Seedless")[0]
+
+# Plátano / Banano
+platano_cavendish = Variedad.objects.get_or_create(cultivo=platano, nombre="Cavendish")[0]
+platano_dwarf = Variedad.objects.get_or_create(cultivo=platano, nombre="Dwarf Cavendish")[0]
+platano_plantain = Variedad.objects.get_or_create(cultivo=platano, nombre="Plantain")[0]
+platano_gros = Variedad.objects.get_or_create(cultivo=platano, nombre="Gros Michel")[0]
+
+# Tomate
+tomate_roma = Variedad.objects.get_or_create(cultivo=tomate, nombre="Roma")[0]
+tomate_cherry = Variedad.objects.get_or_create(cultivo=tomate, nombre="Cherry")[0]
+tomate_beef = Variedad.objects.get_or_create(cultivo=tomate, nombre="Beefsteak")[0]
+tomate_heirloom = Variedad.objects.get_or_create(cultivo=tomate, nombre="Heirloom")[0]
+
 
 # 1) Roles base
 ROLES = ['agricultor', 'administrador', 'tecnico', 'superadmin']
 roles = {name: Rol.objects.get_or_create(nombre=name)[0] for name in ROLES}
 
-# 2) Módulos base
+# 2) Módulos base (añadidos 'cultivos' y 'variedades' para controlar catálogo)
 MODULOS = [
-    'usuarios',
-    'parcelas',
-    'planes',
-    'sensores',
-    'recomendaciones',
-    'tareas',
-    'alertas',
-    'nodos',
-    'reportes',
-    'administracion',
-    'tecnicos',
+    'usuarios', # Controla el acceso a los usuarios
+    'parcelas', # Controla el acceso a las parcelas
+    'cultivos', # Controla el acceso a los cultivos
+    'variedades', # Controla el acceso a las variedades
+    'planes', # Controla el acceso a los planes
+    'sensores', # Controla el acceso a los sensores
+    'recomendaciones', # Controla el acceso a las recomendaciones
+    'tareas', # Controla el acceso a las tareas
+    'alertas', # Controla el acceso a las alertas
+    'nodos', # Controla el acceso a los nodos
+    'reportes', # Controla el acceso a los reportes
+    'administracion', # Controla el acceso a la administración
+    'tecnicos', # Controla el acceso a los técnicos
 ]
 modulos = {name: Modulo.objects.get_or_create(nombre=name)[0] for name in MODULOS}
 
@@ -47,12 +130,14 @@ for mname, modulo in modulos.items():
         ops[op_name] = op
     operaciones_por_modulo[mname] = ops
 
-# 4) Permisos por rol
+# 4) Permisos por rol (incluir cultivos/variedades)
 MATRIZ = {
     'superadmin': {m: OPERACIONES for m in MODULOS},
     'administrador': {
         'usuarios':       ['ver', 'crear', 'actualizar', 'eliminar'],
         'parcelas':       ['ver', 'crear', 'actualizar', 'eliminar'],
+        'cultivos':       ['ver', 'crear', 'actualizar', 'eliminar'],
+        'variedades':     ['ver', 'crear', 'actualizar', 'eliminar'],
         'planes':         ['ver', 'crear', 'actualizar', 'eliminar'],
         'sensores':       ['ver', 'crear', 'actualizar', 'eliminar'],
         'recomendaciones':['ver', 'aprobar'],
@@ -66,6 +151,8 @@ MATRIZ = {
     'tecnico': {
         'sensores': ['ver', 'actualizar'],
         'parcelas': ['ver'],
+        'cultivos': ['ver'],
+        'variedades': ['ver'],
         'tareas':   ['ver', 'actualizar'],
         'alertas':  ['ver', 'actualizar'],
         'reportes': ['ver'],
@@ -73,11 +160,14 @@ MATRIZ = {
     },
     'agricultor': {
         'parcelas':       ['ver', 'crear', 'actualizar'],
+        'cultivos':       ['ver'],
+        'variedades':     ['ver'],
         'planes':         ['ver', 'crear'],
         'sensores':       ['ver'],
         'tareas':         ['ver', 'crear', 'actualizar'],
         'alertas':        ['ver'],
         'reportes':       ['ver'],
+        'nodos':          ['ver'],
         'recomendaciones':['ver'],
     },
 }
@@ -134,39 +224,43 @@ usuarios_seed = []
 
 # superadmin
 if not User.objects.filter(username='superadmin').exists():
-    su = User.objects.create_superuser('superadmin', 'super@demo.com', '12345678')
-    su.rol = roles['superadmin']
-    su.save()
+    su = User.objects.create_superuser('superadmin', 'super@demo.com', '12345678', rol=roles['superadmin'])
     usuarios_seed.append(su)
 else:
-    usuarios_seed.append(User.objects.get(username='superadmin'))
+    su = User.objects.get(username='superadmin')
+    usuarios_seed.append(su)
 
 # administrador
 if not User.objects.filter(username='admin1').exists():
-    admin = User.objects.create_user(username='admin1', email='admin@demo.com', password='12345678', is_staff=True)
-    admin.rol = roles['administrador']
-    admin.save()
+    admin = User.objects.create_user(username='admin1', email='admin@demo.com', password='12345678', is_staff=True, rol=roles['administrador'])
     usuarios_seed.append(admin)
 else:
-    usuarios_seed.append(User.objects.get(username='admin1'))
+    admin = User.objects.get(username='admin1')
+    usuarios_seed.append(admin)
 
 # técnico
 if not User.objects.filter(username='tecnico1').exists():
-    tec = User.objects.create_user(username='tecnico1', email='tec@demo.com', password='12345678')
-    tec.rol = roles['tecnico']
-    tec.save()
+    tec = User.objects.create_user(username='tecnico1', email='tec@demo.com', password='12345678', rol=roles['tecnico'])
     usuarios_seed.append(tec)
 else:
-    usuarios_seed.append(User.objects.get(username='tecnico1'))
+    tec = User.objects.get(username='tecnico1')
+    usuarios_seed.append(tec)
 
 # agricultor
 if not User.objects.filter(username='agricultor1').exists():
-    agri = User.objects.create_user(username='agricultor1', email='agri@demo.com', password='12345678', is_active=True)
-    agri.rol = roles['agricultor']
-    agri.save()
+    agri = User.objects.create_user(username='agricultor1', email='agri@demo.com', password='12345678', is_active=True, rol=roles['agricultor'])
     usuarios_seed.append(agri)
 else:
-    usuarios_seed.append(User.objects.get(username='agricultor1'))
+    agri = User.objects.get(username='agricultor1')
+    usuarios_seed.append(agri)
+
+# --- Agricultor extra ---
+if not User.objects.filter(username='agricultor2').exists():
+    agri2 = User.objects.create_user(username='agricultor2', email='agri2@demo.com', password='12345678', is_active=True, rol=roles['agricultor'])
+    usuarios_seed.append(agri2)
+else:
+    agri2 = User.objects.get(username='agricultor2')
+    usuarios_seed.append(agri2)
 
 # tokens
 for u in usuarios_seed:
@@ -184,7 +278,8 @@ parcela1, _ = Parcela.objects.get_or_create(
         "latitud": -12.0464,
         "longitud": -77.0428,
         "altitud": 120.0,
-        "tipo_cultivo": "Maíz",
+        "cultivo": maiz,
+        "variedad": maiz_blanco,
     }
 )
 parcela2, _ = Parcela.objects.get_or_create(
@@ -195,7 +290,8 @@ parcela2, _ = Parcela.objects.get_or_create(
         "latitud": -5.1945,
         "longitud": -80.6328,
         "altitud": 45.0,
-        "tipo_cultivo": "Arroz",
+        "cultivo": papaya,
+        "variedad": papaya_red,
     }
 )
 parcela3, _ = Parcela.objects.get_or_create(
@@ -206,7 +302,34 @@ parcela3, _ = Parcela.objects.get_or_create(
         "latitud": -13.1631,
         "longitud": -72.5450,
         "altitud": 3400.0,
-        "tipo_cultivo": "Papa",
+        "cultivo": palta,
+        "variedad": palta_hass,
+    }
+)
+
+# Parcelas para agricultor2
+parcela4, _ = Parcela.objects.get_or_create(
+    usuario=agri2, nombre="Parcela Agri2 1",
+    defaults={
+        "ubicacion": "Selva Alta",
+        "tamano_hectareas": 8.0,
+        "latitud": -9.189967,
+        "longitud": -75.015152,
+        "altitud": 600.0,
+        "cultivo": palta,
+        "variedad": palta_hass,
+    }
+)
+parcela5, _ = Parcela.objects.get_or_create(
+    usuario=agri2, nombre="Parcela Agri2 2",
+    defaults={
+        "ubicacion": "Costa Sur",
+        "tamano_hectareas": 15.0,
+        "latitud": -16.409047,
+        "longitud": -71.537451,
+        "altitud": 200.0,
+        "cultivo": papaya,
+        "variedad": papaya_red,
     }
 )
 
@@ -260,6 +383,31 @@ nodo_maestro3, _ = Node.objects.get_or_create(
     }
 )
 
+nodo_maestro4, _ = Node.objects.get_or_create(
+    codigo="NODE-004",
+    parcela=parcela4,
+    defaults={
+        "lat": -9.189967,
+        "lng": -75.015152,
+        "estado": "activo",
+        "bateria": 92,
+        "senal": -68,
+        "last_seen": datetime(2025, 10, 4, 8, 0, 0, tzinfo=timezone.utc),
+    }
+)
+nodo_maestro5, _ = Node.objects.get_or_create(
+    codigo="NODE-005",
+    parcela=parcela5,
+    defaults={
+        "lat": -16.409047,
+        "lng": -71.537451,
+        "estado": "activo",
+        "bateria": 89,
+        "senal": -72,
+        "last_seen": datetime(2025, 10, 5, 8, 0, 0, tzinfo=timezone.utc),
+    }
+)
+
 secundarios1 = []
 for i in range(1, 4):
     sec, _ = NodoSecundario.objects.get_or_create(
@@ -298,6 +446,32 @@ for i in range(1, 3):
         }
     )
     secundarios3.append(sec)
+
+secundarios4 = []
+for i in range(1, 3):
+    sec, _ = NodoSecundario.objects.get_or_create(
+        codigo=f"NODE-04-S{i}",
+        maestro=nodo_maestro4,
+        defaults={
+            "estado": "activo",
+            "bateria": 90 - i * 2,
+            "last_seen": datetime(2025, 10, 4, 8, 10 + i, 0, tzinfo=timezone.utc),
+        }
+    )
+    secundarios4.append(sec)
+
+secundarios5 = []
+for i in range(1, 4):
+    sec, _ = NodoSecundario.objects.get_or_create(
+        codigo=f"NODE-05-S{i}",
+        maestro=nodo_maestro5,
+        defaults={
+            "estado": "activo",
+            "bateria": 87 - i * 2,
+            "last_seen": datetime(2025, 10, 5, 8, 10 + i, 0, tzinfo=timezone.utc),
+        }
+    )
+    secundarios5.append(sec)
 
 # 9) MongoDB: telemetría demo
 try:
@@ -374,6 +548,63 @@ try:
                 ]
             })
 
+        # --- Telemetría para agricultor2 ---
+        docs += [
+            {
+                "seed_tag": "demo",
+                "parcela_id": parcela4.id,
+                "codigo_nodo_maestro": nodo_maestro4.codigo,
+                "timestamp": dt.datetime(2025, 10, 4, 8, 0, 0),
+                "lecturas": [
+                    {
+                        "nodo_codigo": secundarios4[0].codigo,
+                        "last_seen": secundarios4[0].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 21.5, "unidad": "°C"},
+                            {"sensor": "humedad", "valor": 70.2, "unidad": "%"},
+                        ]
+                    },
+                    {
+                        "nodo_codigo": secundarios4[1].codigo,
+                        "last_seen": secundarios4[1].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 22.1, "unidad": "°C"},
+                        ]
+                    }
+                ]
+            },
+            {
+                "seed_tag": "demo",
+                "parcela_id": parcela5.id,
+                "codigo_nodo_maestro": nodo_maestro5.codigo,
+                "timestamp": dt.datetime(2025, 10, 5, 8, 0, 0),
+                "lecturas": [
+                    {
+                        "nodo_codigo": secundarios5[0].codigo,
+                        "last_seen": secundarios5[0].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 23.0, "unidad": "°C"},
+                            {"sensor": "humedad", "valor": 68.0, "unidad": "%"},
+                        ]
+                    },
+                    {
+                        "nodo_codigo": secundarios5[1].codigo,
+                        "last_seen": secundarios5[1].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 24.2, "unidad": "°C"},
+                        ]
+                    },
+                    {
+                        "nodo_codigo": secundarios5[2].codigo,
+                        "last_seen": secundarios5[2].last_seen,
+                        "sensores": [
+                            {"sensor": "temperatura", "valor": 25.1, "unidad": "°C"},
+                        ]
+                    }
+                ]
+            }
+        ]
+
         readings.insert_many(docs)
         print("MongoDB: sensor_readings insertados.")
     else:
@@ -394,6 +625,18 @@ for u in usuarios_seed:
             dni="12345678",
             experiencia_agricola=2,
             fecha_nacimiento="1990-01-01",
+        )
+    elif u.username == 'agricultor2':
+        PerfilUsuario.objects.get_or_create(
+            usuario=u,
+            defaults={
+                "nombres": "Agricultor2 Nombre",
+                "apellidos": "Agricultor2 Apellido",
+                "telefono": "988888888",
+                "dni": "87654321",
+                "experiencia_agricola": 3,
+                "fecha_nacimiento": "1988-05-15",
+            }
         )
 
 print(

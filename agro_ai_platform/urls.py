@@ -7,7 +7,9 @@ urlpatterns = [
     path('auth/', include('authentication.urls')),
     path('api/', include('parcels.urls')),
     path('api/', include('plans.urls')),
+    path('api/', include('recommendations.urls')),  # agregado: endpoints de recomendaciones (ajusta a 'recomendaciones' si tu app usa nombre en español)
     path('api/', include('nodes.urls')),       # ingesta de nodos
+    path('api/', include('tasks.urls')),       # agregado: endpoints de tareas
     # path('api/', include('alerts.urls')),
     path('api/admin/', include('users.admin_urls')),    # gestión de usuarios y recursos admin
     path('api/rbac/', include('users.rbac_urls')),      # gestión de roles/permisos
@@ -18,6 +20,4 @@ urlpatterns = [
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
-    
-
 ]
