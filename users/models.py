@@ -52,8 +52,8 @@ class RolesOperaciones(models.Model):
     modulo = models.ForeignKey('users.Modulo', on_delete=models.CASCADE, related_name='permisos')
     operacion = models.ForeignKey('users.Operacion', on_delete=models.CASCADE, related_name='permisos')
 
-    created_at = models.DateTimeField(auto_now_add=True)  # 👈 agregado
-    updated_at = models.DateTimeField(auto_now=True)      # 👈 agregado
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)    
 
     class Meta:
         constraints = [

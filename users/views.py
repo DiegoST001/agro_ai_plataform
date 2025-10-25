@@ -15,6 +15,7 @@ from .serializers import (
 from .permissions import HasOperationPermission
 from rest_framework.views import APIView
 from .models import Prospecto
+from django.db import transaction
 
 @extend_schema(
     tags=['User'],
@@ -86,7 +87,7 @@ class UpdateUserProfileView(View):
     description=(
         "Devuelve la lista de roles disponibles en el sistema.\n\n"
         "Cada rol incluye su nombre y descripción.\n\n"
-        "Útil para asignar roles a usuarios o mostrar opciones en formularios."
+        "Útil para asignar roles a usuarios ou mostrar opciones en formularios."
     ),
     responses={
         200: OpenApiExample(
@@ -390,7 +391,10 @@ class ProspectoDetailView(generics.RetrieveAPIView):
     summary='Aceptar prospecto y crear agricultor',
     description=(
         "Acepta un prospecto y crea un usuario agricultor con los datos del prospecto.\n\n"
-        "Permite modificar el correo y asignar un username y contraseña.\n"
+        "Permite modificar el correo y asignar un username y contraseña.\n\n"
+        "Notas:\n"
+        "- `username` y `password` son obligatorios.\n"
+        "- `email` es opcional: si no se envía se usará el correo registrado en el prospecto (`prospecto.correo`).\n\n"
         "**Permisos:** Solo administradores pueden acceder."
     ),
     request={
@@ -399,49 +403,72 @@ class ProspectoDetailView(generics.RetrieveAPIView):
             "properties": {
                 "username": {"type": "string", "example": "nuevo_usuario"},
                 "password": {"type": "string", "example": "contraseña_segura"},
-                "correo": {"type": "string", "example": "nuevo@email.com"},
+                "email": {"type": "string", "format": "email", "example": "nuevo@email.com"},
             },
-            "required": ["username", "password"]
+            "required": ["username", "password"],  # email queda opcional
         }
     },
     responses={
-        201: OpenApiExample('Agricultor creado', value={"msg": "Agricultor creado"}),
-        400: OpenApiExample('Error', value={"error": "Username ya existe"})
-    }
+        201: OpenApiExample('Agricultor creado', value={"msg": "Agricultor creado", "user_id": 123}),
+        400: OpenApiExample('Error', value={"error": "Username ya existe / Correo ya existe / username/password son requeridos"}),
+        404: OpenApiExample('No encontrado', value={"detail": "Prospecto no encontrado."}),
+        500: OpenApiExample('Error servidor', value={"error": "Rol agricultor no configurado."})
+    },
+    examples=[
+        OpenApiExample('Aceptar con email (override)', value={"username":"agro01","password":"Secreto123","email":"nuevo@demo.com"}),
+        OpenApiExample('Aceptar sin email (usar correo del prospecto)', value={"username":"agro02","password":"Secreto123"})
+    ]
 )
 class ProspectoAceptarView(APIView):
     permission_classes = [permissions.IsAdminUser]
-    def post(self, request, pk):
-        prospecto = Prospecto.objects.get(pk=pk)
-        username = request.data.get('username')
-        password = request.data.get('password')
-        correo = request.data.get('correo', prospecto.correo)
 
-        # Validaciones
-        if User.objects.filter(username=username).exists():
+    def post(self, request, pk):
+        try:
+            prospecto = Prospecto.objects.get(pk=pk)
+        except Prospecto.DoesNotExist:
+            return Response({'detail': 'Prospecto no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        username = (request.data.get('username') or '').strip()
+        password = request.data.get('password')
+        # email opcional: si no se provee se usa el correo del prospecto
+        email = request.data.get('email') or prospecto.correo
+
+        # Validaciones básicas
+        if not username:
+            return Response({'error': 'username es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not password:
+            return Response({'error': 'password es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not email:
+            return Response({'error': 'email no disponible en prospecto y no fue proporcionado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Unicidad (case-insensitive)
+        if User.objects.filter(username__iexact=username).exists():
             return Response({'error': 'Username ya existe'}, status=status.HTTP_400_BAD_REQUEST)
-        if User.objects.filter(email=correo).exists():
+        if User.objects.filter(email__iexact=email).exists():
             return Response({'error': 'Correo ya existe'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Crear usuario agricultor
-        rol_agricultor = Rol.objects.get(nombre='agricultor')
-        user = User.objects.create_user(username=username, email=correo, password=password, is_active=True)
-        user.rol = rol_agricultor
-        user.save()
+        # Crear usuario y perfil dentro de una transacción
+        try:
+            rol_agricultor = Rol.objects.get(nombre__iexact='agricultor')
+        except Rol.DoesNotExist:
+            return Response({'error': 'Rol agricultor no configurado.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Crear perfil
-        PerfilUsuario.objects.create(
-            usuario=user,
-            nombres=prospecto.nombre_completo,
-            telefono=prospecto.telefono,
-            dni=prospecto.dni,
-        )
+        with transaction.atomic():
+            user = User.objects.create_user(username=username, email=email, password=password, is_active=True)
+            user.rol = rol_agricultor
+            user.save()
 
-        # Marcar prospecto como aprobado
-        prospecto.estado = 'aprobado'
-        prospecto.save()
+            PerfilUsuario.objects.create(
+                usuario=user,
+                nombres=prospecto.nombre_completo,
+                telefono=prospecto.telefono,
+                dni=prospecto.dni,
+            )
 
-        return Response({'msg': 'Agricultor creado'}, status=status.HTTP_201_CREATED)
+            prospecto.estado = 'aprobado'
+            prospecto.save()
+
+        return Response({'msg': 'Agricultor creado', 'user_id': user.id}, status=status.HTTP_201_CREATED)
 
 
 @extend_schema(
