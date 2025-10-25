@@ -442,3 +442,73 @@ class ProspectoAceptarView(APIView):
         prospecto.save()
 
         return Response({'msg': 'Agricultor creado'}, status=status.HTTP_201_CREATED)
+
+
+@extend_schema(
+    tags=['Public'],
+    summary='Total de usuarios registrados',
+    description=(
+        "Devuelve el total de usuarios registrados en el sistema.\n\n"
+        "Endpoint público, útil para mostrar en la página de bienvenida."
+    ),
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "total": {"type": "integer", "example": 120}
+            }
+        }
+    }
+)
+class UsuariosTotalPublicView(APIView):
+    permission_classes = []  # Público, sin autenticación
+
+    def get(self, request):
+        from authentication.models import User
+        total = User.objects.count()
+        return Response({"total": total})
+
+@extend_schema(
+    tags=['Public'],
+    summary='Registrar prospecto',
+    description=(
+        "Permite a cualquier usuario registrar sus datos como prospecto para ser contactado y eventualmente convertirse en agricultor.\n\n"
+        "No requiere autenticación. El prospecto queda en estado 'pendiente' hasta que un administrador lo apruebe."
+    ),
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "nombre_completo": {"type": "string", "example": "Juan Pérez"},
+                "dni": {"type": "string", "example": "12345678"},
+                "correo": {"type": "string", "example": "juan@email.com"},
+                "telefono": {"type": "string", "example": "999888777"},
+                "ubicacion_parcela": {"type": "string", "example": "Cusco, sector 5"},
+                "descripcion_terreno": {"type": "string", "example": "Terreno arcilloso, 2 hectáreas"},
+            },
+            "required": ["nombre_completo", "dni", "correo", "telefono", "ubicacion_parcela", "descripcion_terreno"]
+        }
+    },
+    responses={
+        201: OpenApiExample('Prospecto registrado', value={"msg": "Prospecto registrado"}),
+        400: OpenApiExample('Error', value={"error": "Correo ya registrado"})
+    }
+)
+class ProspectoPublicCreateView(APIView):
+    permission_classes = []  # Público
+
+    def post(self, request):
+        data = request.data
+        from .models import Prospecto
+        if Prospecto.objects.filter(correo=data.get('correo')).exists():
+            return Response({'error': 'Correo ya registrado'}, status=status.HTTP_400_BAD_REQUEST)
+        prospecto = Prospecto.objects.create(
+            nombre_completo=data.get('nombre_completo'),
+            dni=data.get('dni'),
+            correo=data.get('correo'),
+            telefono=data.get('telefono'),
+            ubicacion_parcela=data.get('ubicacion_parcela'),
+            descripcion_terreno=data.get('descripcion_terreno'),
+            estado='pendiente'
+        )
+        return Response({'msg': 'Prospecto registrado'}, status=status.HTTP_201_CREATED)

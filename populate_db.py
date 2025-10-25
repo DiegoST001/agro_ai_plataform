@@ -108,6 +108,8 @@ MODULOS = [
     'parcelas', # Controla el acceso a las parcelas
     'cultivos', # Controla el acceso a los cultivos
     'variedades', # Controla el acceso a las variedades
+    'etapas',    # Controla el acceso a las etapas
+    'reglas',    # Controla el acceso a las reglas por etapa
     'planes', # Controla el acceso a los planes
     'sensores', # Controla el acceso a los sensores
     'recomendaciones', # Controla el acceso a las recomendaciones
@@ -130,7 +132,7 @@ for mname, modulo in modulos.items():
         ops[op_name] = op
     operaciones_por_modulo[mname] = ops
 
-# 4) Permisos por rol (incluir cultivos/variedades)
+# 4) Permisos por rol (incluir cultivos/variedades/etapas/reglas)
 MATRIZ = {
     'superadmin': {m: OPERACIONES for m in MODULOS},
     'administrador': {
@@ -138,6 +140,8 @@ MATRIZ = {
         'parcelas':       ['ver', 'crear', 'actualizar', 'eliminar'],
         'cultivos':       ['ver', 'crear', 'actualizar', 'eliminar'],
         'variedades':     ['ver', 'crear', 'actualizar', 'eliminar'],
+        'etapas':         ['ver', 'crear', 'actualizar', 'eliminar'],
+        'reglas':         ['ver', 'crear', 'actualizar', 'eliminar', 'aprobar'],
         'planes':         ['ver', 'crear', 'actualizar', 'eliminar'],
         'sensores':       ['ver', 'crear', 'actualizar', 'eliminar'],
         'recomendaciones':['ver', 'aprobar'],
@@ -153,6 +157,8 @@ MATRIZ = {
         'parcelas': ['ver'],
         'cultivos': ['ver'],
         'variedades': ['ver'],
+        'etapas':   ['ver'],
+        'reglas':   ['ver', 'actualizar'],
         'tareas':   ['ver', 'actualizar'],
         'alertas':  ['ver', 'actualizar'],
         'reportes': ['ver'],
@@ -162,6 +168,8 @@ MATRIZ = {
         'parcelas':       ['ver', 'crear', 'actualizar'],
         'cultivos':       ['ver'],
         'variedades':     ['ver'],
+        'etapas':         ['ver'],
+        'reglas':         ['ver'],
         'planes':         ['ver', 'crear'],
         'sensores':       ['ver'],
         'tareas':         ['ver', 'crear', 'actualizar'],
@@ -477,14 +485,20 @@ for i in range(1, 4):
 try:
     from pymongo import MongoClient
     import datetime as dt
+    # intentar usar la conexión central si está disponible
+    try:
+        from agro_ai_platform.mongo import get_db
+        db = get_db()
+    except Exception:
+        client = MongoClient(settings.MONGO_URL)
+        db = client[settings.MONGO_DB]
 
-    client = MongoClient(settings.MONGO_URL)
-    mdb = client[settings.MONGO_DB]
-    readings = mdb.sensor_readings
-    readings.create_index([("parcela_id", 1)])
-    readings.create_index([("timestamp", -1)])
+    # Usar únicamente la colección `lecturas_sensores`
+    lects = db.lecturas_sensores
+    lects.create_index([("parcela_id", 1)])
+    lects.create_index([("timestamp", -1)])
 
-    if readings.count_documents({"seed_tag": "demo"}) == 0:
+    if lects.count_documents({"seed_tag": "demo"}) == 0:
         docs = [
             {
                 "seed_tag": "demo",
@@ -605,14 +619,78 @@ try:
             }
         ]
 
-        readings.insert_many(docs)
-        print("MongoDB: sensor_readings insertados.")
+        # Insertar directamente en lecturas_sensores
+        try:
+            lects.insert_many(docs)
+            print("MongoDB: lecturas_sensores insertados.")
+        except Exception as e:
+            print(f"MongoDB: error al insertar en lecturas_sensores -> {e}")
     else:
-        print("MongoDB: seed_tag=demo ya existe, no se duplica.")
+        print("MongoDB: lecturas_sensores seed_tag=demo ya existe, no se duplica.")
 except ImportError:
     print("Nota: pymongo no instalado. Ejecuta: pip install pymongo")
 except Exception as e:
     print(f"MongoDB: error al insertar datos demo -> {e}")
+
+# --- PROSPECTOS DEMO ---
+# aseguramos limpieza (ya se borra arriba pero dejamos idempotencia local)
+Prospecto.objects.all().delete()
+
+prospectos_demo = [
+    {
+        "nombre_completo": "Carlos Pérez",
+        "dni": "70441234",
+        "correo": "carlos.perez@example.com",
+        "telefono": "999000111",
+        "ubicacion_parcela": "Valle Central - Sector A",
+        "descripcion_terreno": "5 ha, suelo franco, ligera pendiente"
+    },
+    {
+        "nombre_completo": "María López",
+        "dni": "70441235",
+        "correo": "maria.lopez@example.com",
+        "telefono": "999000112",
+        "ubicacion_parcela": "Costa Norte - Playa",
+        "descripcion_terreno": "12 ha, suelo arenoso, riego por goteo posible"
+    },
+    {
+        "nombre_completo": "Juan Torres",
+        "dni": "70441236",
+        "correo": "juan.torres@example.com",
+        "telefono": "999000113",
+        "ubicacion_parcela": "Sierra Sur - Altiplano",
+        "descripcion_terreno": "3 ha, altitud alta, suelos pedregosos"
+    },
+    {
+        "nombre_completo": "Ana Gómez",
+        "dni": "70441237",
+        "correo": "ana.gomez@example.com",
+        "telefono": "999000114",
+        "ubicacion_parcela": "Selva Alta - Zona B",
+        "descripcion_terreno": "8 ha, suelo húmedo, acceso limitado"
+    },
+    {
+        "nombre_completo": "Luis Fernández",
+        "dni": "70441238",
+        "correo": "luis.fernandez@example.com",
+        "telefono": "999000115",
+        "ubicacion_parcela": "Valle Bajo - Parcelas 12",
+        "descripcion_terreno": "10 ha, buen acceso, suelos ricos"
+    },
+    {
+        "nombre_completo": "Beatriz Castillo",
+        "dni": "70441239",
+        "correo": "beatriz.castillo@example.com",
+        "telefono": "999000116",
+        "ubicacion_parcela": "Costa Sur - Parcel 5",
+        "descripcion_terreno": "15 ha, suelo mixto, cercado parcial"
+    },
+]
+
+for p in prospectos_demo:
+    Prospecto.objects.create(**p)
+
+print(f"Prospectos insertados: {len(prospectos_demo)}")
 
 # Crear perfiles demo
 for u in usuarios_seed:

@@ -273,3 +273,43 @@ class ParcelaPlanDetailView(generics.RetrieveUpdateDestroyAPIView):
         if getattr(obj.parcela, 'usuario', None) == user:
             return obj
         raise PermissionDenied("No tienes permiso sobre esta suscripción.")
+
+#
+# Public Plans
+#
+@extend_schema(
+    tags=['Public'],
+    summary='Listar planes públicos (sin autenticación)',
+    description=(
+        "Devuelve la lista de planes disponibles ordenados por precio. "
+        "No requiere autenticación. Útil para mostrar en la página de bienvenida o registro."
+    ),
+    responses={200: PlanSerializer(many=True)},
+    examples=[
+        OpenApiExample(
+            'Lista pública ejemplo',
+            description='Respuesta ejemplo de GET /planes/public/',
+            value=[{
+                "id": 1,
+                "nombre": "Básico",
+                "descripcion": "Plan básico",
+                "frecuencia_minutos": None,
+                "veces_por_dia": 3,
+                "horarios_por_defecto": ["07:00","15:00","22:00"],
+                "limite_lecturas_dia": 8,
+                "precio": "9.99",
+                "created_at": "2025-10-20T00:00:00Z",
+                "updated_at": "2025-10-20T00:00:00Z"
+            }]
+        )
+    ]
+)
+class PublicPlanListView(generics.ListAPIView):
+    """
+    Endpoint público para listar los planes disponibles.
+    No requiere autenticación ni permisos especiales.
+    Útil para mostrar en la página de bienvenida o registro.
+    """
+    queryset = Plan.objects.all().order_by('precio')
+    serializer_class = PlanSerializer
+    permission_classes = [permissions.AllowAny]

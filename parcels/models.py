@@ -31,6 +31,9 @@ class Etapa(models.Model):
     # optional: duración estimada en días para cálculo automático de siguiente etapa
     duracion_estimada_dias = models.PositiveIntegerField(null=True, blank=True)
 
+    # nuevo: marcar si la etapa está disponible/activa globalmente
+    activo = models.BooleanField(default=True)
+
     class Meta:
         unique_together = ('variedad', 'nombre')
         ordering = ['orden']
@@ -80,7 +83,6 @@ class Parcela(models.Model):
     cultivo = models.ForeignKey(Cultivo, on_delete=models.SET_NULL, null=True, blank=True)
     variedad = models.ForeignKey(Variedad, on_delete=models.SET_NULL, null=True, blank=True)
 
-    # nuevo: etapa actual y fecha de inicio de la etapa
     etapa_actual = models.ForeignKey(Etapa, on_delete=models.SET_NULL, null=True, blank=True, related_name='parcelas_en_etapa')
     etapa_inicio = models.DateField(null=True, blank=True)
 

@@ -1,17 +1,16 @@
 from django.db.models import Count
 from rest_framework import permissions, generics
-from drf_spectacular.utils import extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample
+from drf_spectacular.utils import (
+    extend_schema_view, extend_schema,
+    OpenApiParameter, OpenApiTypes, OpenApiExample
+)
 from users.permissions import HasOperationPermission, OwnsObjectOrAdmin, role_name, tiene_permiso
-from .models import Parcela, Cultivo, Variedad
+from .models import Parcela, Cultivo, Variedad, Etapa, ReglaPorEtapa
 from .serializers import (
-    ParcelaCreateSerializer,
-    ParcelaUpdateSerializer,
-    ParcelaAdminListSerializer,
-    ParcelaOwnerListSerializer,
-    CultivoSerializer,
-    VariedadSerializer,
-    CultivoSimpleSerializer,
-    VariedadSimpleSerializer,
+    ParcelaCreateSerializer, ParcelaUpdateSerializer, ParcelaAdminListSerializer,
+    ParcelaOwnerListSerializer, CultivoSerializer, VariedadSerializer,
+    CultivoSimpleSerializer, VariedadSimpleSerializer, EtapaSerializer,
+    ReglaPorEtapaSerializer,
 )
 
 def _annotate_parcelas(qs):
@@ -533,6 +532,274 @@ class VariedadDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method == 'DELETE':
             return [permissions.IsAuthenticated(), HasOperationPermission('variedades', 'eliminar')]
         return [permissions.IsAuthenticated()]
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=['etapas'],
+        summary='Listar etapas',
+        description=(
+            "Devuelve la lista de etapas para variedades.\n\n"
+            "Filtros disponibles:\n"
+            "- `variedad` (query): id de la variedad para filtrar etapas de esa variedad.\n\n"
+            "Comportamiento:\n"
+            "- Solo usuarios con permiso `etapas.ver` pueden listar.\n"
+            "- Devuelve etapas con sus campos: id, variedad (id), nombre, orden, descripcion, duracion_estimada_dias, activo.\n\n"
+            "Ejemplo de uso:\n"
+            "GET /api/etapas/?variedad=12\n\n"
+            "Respuesta (200): lista de objetos Etapa."
+        ),
+        parameters=[
+            OpenApiParameter(name='variedad', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description="Filtrar por id de variedad"),
+            OpenApiParameter(name='ordering', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description="Campo para ordenar (p.ej. 'orden' o '-orden')"),
+        ],
+        responses={200: EtapaSerializer(many=True)},
+        examples=[
+            OpenApiExample(
+                'Lista etapas ejemplo',
+                value=[{
+                    "id": 3,
+                    "variedad": 5,
+                    "nombre": "Floración",
+                    "orden": 3,
+                    "descripcion": "Etapa con flores visibles",
+                    "duracion_estimada_dias": 21,
+                    "activo": True
+                }]
+            )
+        ]
+    ),
+    post=extend_schema(
+        tags=['etapas'],
+        summary='Crear etapa',
+        description=(
+            "Crea una nueva etapa asociada a una variedad.\n\n"
+            "Validaciones principales:\n"
+            "- `variedad` se toma de la URL (`/variedades/<variedad_id>/etapas/`) o del body.\n"
+            "- `nombre` debe ser único dentro de la misma variedad.\n\n"
+            "Campos esperados: nombre (required), orden (opcional), descripcion, duracion_estimada_dias, activo\n\n"
+            "Ejemplo de body:\n"
+            "```json\n"
+            "{ \"nombre\": \"Floración\", \"orden\": 3, \"duracion_estimada_dias\": 21, \"activo\": true }\n"
+            "```"
+        ),
+        request=EtapaSerializer,
+        responses={201: EtapaSerializer},
+        examples=[
+            OpenApiExample(
+                'Crear etapa ejemplo',
+                value={
+                    "id": 10,
+                    "variedad": 5,
+                    "nombre": "Floración",
+                    "orden": 3,
+                    "descripcion": "Etapa con flores visibles",
+                    "duracion_estimada_dias": 21,
+                    "activo": True
+                }
+            )
+        ]
+    ),
+)
+class EtapaListCreateView(generics.ListCreateAPIView):
+    serializer_class = EtapaSerializer
+
+    def get_permissions(self):
+        op = 'ver' if self.request.method == 'GET' else 'crear'
+        return [permissions.IsAuthenticated(), HasOperationPermission('etapas', op)]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'etapas', 'ver'):
+            return Etapa.objects.none()
+        qs = Etapa.objects.select_related('variedad__cultivo').all().order_by('variedad__nombre', 'orden')
+        variedad_id = self.kwargs.get('variedad_id') or self.request.query_params.get('variedad')
+        if variedad_id:
+            qs = qs.filter(variedad_id=variedad_id)
+        return qs
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        variedad_id = self.kwargs.get('variedad_id') or self.request.query_params.get('variedad') or self.request.data.get('variedad')
+        if variedad_id:
+            try:
+                ctx['variedad'] = Variedad.objects.get(pk=variedad_id)
+            except Variedad.DoesNotExist:
+                ctx['variedad'] = None
+        return ctx
+
+    def perform_create(self, serializer):
+        variedad_id = self.kwargs.get('variedad_id') or self.request.data.get('variedad')
+        if not variedad_id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"variedad": "Proporciona variedad en la URL o en el body."})
+        try:
+            variedad = Variedad.objects.get(pk=variedad_id)
+        except Variedad.DoesNotExist:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"variedad": "Variedad no existe."})
+        serializer.save(variedad=variedad)
+
+@extend_schema_view(
+    get=extend_schema(tags=['etapas'], summary='Detalle de etapa', description=(
+        "Devuelve el detalle de una etapa específica.\n\n"
+        "Respuesta incluye: id, variedad (id), nombre, orden, descripcion, duracion_estimada_dias, activo.\n\n"
+        "Permisos: requiere `etapas.ver`."
+    ), responses={200: EtapaSerializer}),
+    put=extend_schema(tags=['etapas'], summary='Actualizar etapa', description=(
+        "Actualiza todos los campos de una etapa. Validaciones:\n"
+        "- El nombre debe permanecer único dentro de la variedad.\n"
+        "- No se permite asignar una variedad diferente desde este endpoint; para mover etapa usar administración.\n"
+    ), request=EtapaSerializer, responses={200: EtapaSerializer}),
+    patch=extend_schema(tags=['etapas'], summary='Actualizar parcialmente etapa', description="Actualiza campos puntuales de la etapa.", request=EtapaSerializer, responses={200: EtapaSerializer}),
+    delete=extend_schema(tags=['etapas'], summary='Eliminar etapa', description="Elimina la etapa. Requiere permiso `etapas.eliminar`."),
+)
+class EtapaDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Etapa.objects.select_related('variedad__cultivo').all()
+    serializer_class = EtapaSerializer
+
+    def _op(self):
+        if self.request.method == 'GET':
+            return 'ver'
+        if self.request.method in ['PUT', 'PATCH']:
+            return 'actualizar'
+        if self.request.method == 'DELETE':
+            return 'eliminar'
+        return 'ver'
+
+    def get_permissions(self):
+        # catalog items: control por operación en módulo 'etapas'
+        if self.request.method == 'GET':
+            return [permissions.IsAuthenticated(), HasOperationPermission('etapas', 'ver')]
+        if self.request.method in ['PUT', 'PATCH']:
+            return [permissions.IsAuthenticated(), HasOperationPermission('etapas', 'actualizar')]
+        if self.request.method == 'DELETE':
+            return [permissions.IsAuthenticated(), HasOperationPermission('etapas', 'eliminar')]
+        return [permissions.IsAuthenticated()]
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=['etapas','reglas'],
+        summary='Listar reglas por etapa',
+        description=(
+            "Lista reglas técnicas asociadas a etapas.\n\n"
+            "Filtros soportados:\n"
+            "- `etapa` (query): id de etapa\n"
+            "- `variedad` (query): id de variedad\n"
+            "- `cultivo` (query): id de cultivo\n"
+            "- `parametro` (query): nombre del parámetro (p.ej. 'temperatura_aire')\n"
+            "- `activo` (query): true/false para filtrar reglas activas\n\n"
+            "Cada regla devuelve: id, etapa, parametro, minimo, maximo, accion_si_menor, accion_si_mayor, activo, prioridad, effective_from, effective_to, created_by, timestamps.\n\n"
+            "Uso típico: el motor 'brain' hace fetch de reglas filtrando por parcela.etapa_actual y aplicando ventanas de vigencia."
+        ),
+        parameters=[
+            OpenApiParameter(name='etapa', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description="Filtrar por id de etapa"),
+            OpenApiParameter(name='variedad', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description="Filtrar por id de variedad"),
+            OpenApiParameter(name='cultivo', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description="Filtrar por id de cultivo"),
+            OpenApiParameter(name='parametro', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description="Filtrar por nombre de parametro"),
+            OpenApiParameter(name='activo', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description="Filtrar por activo (true/false)"),
+        ],
+        responses={200: ReglaPorEtapaSerializer(many=True)},
+        examples=[
+            OpenApiExample(
+                'Lista reglas ejemplo',
+                value=[{
+                    "id": 7,
+                    "etapa": 3,
+                    "parametro": "ndvi",
+                    "minimo": 0.0,
+                    "maximo": 0.6,
+                    "accion_si_menor": "Aumentar riego",
+                    "accion_si_mayor": "Reducir riego",
+                    "activo": True,
+                    "prioridad": 10,
+                    "effective_from": None,
+                    "effective_to": None,
+                    "created_by": {"id": 2, "username": "admin", "email": "admin@example.com"},
+                    "created_at": "2025-10-20T05:01:35.153540Z",
+                    "updated_at": "2025-10-20T05:01:35.153548Z"
+                }]
+            )
+        ]
+    ),
+    post=extend_schema(
+        tags=['etapas','reglas'],
+        summary='Crear regla por etapa',
+        description=(
+            "Crea una regla técnica asociada a una etapa.\n\n"
+            "Validaciones importantes:\n"
+            "- `etapa` es obligatoria y debe existir.\n"
+            "- Si se indican `minimo` y `maximo`, `minimo` debe ser <= `maximo`.\n"
+            "- `effective_from`/`effective_to` definen ventana de vigencia opcional.\n\n"
+            "Ejemplo de body:\n"
+            "```json\n"
+            "{ \"etapa\": 3, \"parametro\": \"ndvi\", \"minimo\": 0.0, \"maximo\": 0.6, \"accion_si_menor\": \"Aumentar riego\" }\n"
+            "```"
+        ),
+        request=ReglaPorEtapaSerializer,
+        responses={201: ReglaPorEtapaSerializer}
+    )
+)
+class ReglaPorEtapaListCreateView(generics.ListCreateAPIView):
+    serializer_class = ReglaPorEtapaSerializer
+
+    def get_permissions(self):
+        op = 'ver' if self.request.method == 'GET' else 'crear'
+        return [permissions.IsAuthenticated(), HasOperationPermission('reglas', op)]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not tiene_permiso(user, 'reglas', 'ver'):
+            return ReglaPorEtapa.objects.none()
+        qs = ReglaPorEtapa.objects.select_related('etapa__variedad__cultivo').all().order_by('-prioridad','id')
+        etapa_id = self.kwargs.get('etapa_id') or self.request.query_params.get('etapa')
+        variedad_id = self.request.query_params.get('variedad')
+        cultivo_id = self.request.query_params.get('cultivo')
+        if etapa_id:
+            qs = qs.filter(etapa_id=etapa_id)
+        if variedad_id:
+            qs = qs.filter(etapa__variedad_id=variedad_id)
+        if cultivo_id:
+            qs = qs.filter(etapa__variedad__cultivo_id=cultivo_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+@extend_schema_view(
+    get=extend_schema(tags=['etapas','reglas'], summary='Detalle de regla por etapa', description=(
+        "Devuelve detalle completo de una regla por etapa (incluye creador y ventanas de vigencia)."
+    ), responses={200: ReglaPorEtapaSerializer}),
+    put=extend_schema(tags=['etapas','reglas'], summary='Actualizar regla por etapa', description=(
+        "Actualiza por completo una regla. Validaciones: minimo <= maximo, effective_from <= effective_to."
+    ), request=ReglaPorEtapaSerializer, responses={200: ReglaPorEtapaSerializer}),
+    patch=extend_schema(tags=['etapas','reglas'], summary='Actualizar parcialmente regla por etapa', description="Actualiza campos puntuales de la regla.", request=ReglaPorEtapaSerializer, responses={200: ReglaPorEtapaSerializer}),
+    delete=extend_schema(tags=['etapas','reglas'], summary='Eliminar regla por etapa', description="Elimina la regla si el usuario tiene permisos (propietario o admin)."),
+)
+class ReglaPorEtapaDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = ReglaPorEtapa.objects.select_related('etapa__variedad__cultivo').all()
+    serializer_class = ReglaPorEtapaSerializer
+
+    def _op(self):
+        if self.request.method == 'GET':
+            return 'ver'
+        if self.request.method in ['PUT','PATCH']:
+            return 'actualizar'
+        if self.request.method == 'DELETE':
+            return 'eliminar'
+        return 'ver'
+
+    def get_permissions(self):
+        return [
+            permissions.IsAuthenticated(),
+            HasOperationPermission('reglas', self._op()),
+            OwnsObjectOrAdmin()
+        ]
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # permiso de operación ya chequeado por HasOperationPermission; OwnsObjectOrAdmin controla propietario/admin
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 

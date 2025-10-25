@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiExample
 from .auth import NodeTokenAuthentication
 from .models import Node, NodoSecundario, Parcela
-from .mongo import db
+from agro_ai_platform.mongo import get_db
 from .serializers import NodeSerializer, NodoSecundarioSerializer
 # reemplazado: import directo de helpers de permisos del app nodes (reusa users.permissions)
 from .permissions import tiene_permiso, role_name, HasOperationPermission, OwnsObjectOrAdmin
@@ -13,6 +13,8 @@ from rest_framework.exceptions import PermissionDenied, NotFound
 
 
 def readings_collection(name):
+    # usa get_db() de forma lazy para evitar import-time issues
+    db = get_db()
     return db[name]
 
 @extend_schema(
@@ -97,11 +99,26 @@ class NodeIngestView(views.APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
+        # 0) autenticación por token de nodo (NodeTokenAuthentication debe setear request.node y request.auth)
+        token = getattr(request, "auth", None)
+        nodo_auth = getattr(request, "node", None)
+        if not token or not nodo_auth:
+            return Response({'detail': 'No autorizado'}, status=status.HTTP_401_UNAUTHORIZED)
+
         payload = request.data or {}
+        # normalizar timestamp (acepta ISO string o None)
+        ts = payload.get("timestamp")
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except Exception:
+                ts = None
+
         mongo_doc = {
+            "seed_tag": payload.get("seed_tag", "demo"),
             "parcela_id": payload.get("parcela_id"),
             "codigo_nodo_maestro": payload.get("codigo_nodo_maestro"),
-            "timestamp": payload.get("timestamp"),
+            "timestamp": ts or timezone.now(),
             "lecturas": []
         }
         # recopilar códigos presentes en el payload
@@ -118,12 +135,15 @@ class NodeIngestView(views.APIView):
             mongo_doc["lecturas"].append(lectura_doc)
             if codigo:
                 present_codes.add(codigo)
-        readings_collection("lecturas_sensores").insert_one(mongo_doc)
-
-        # actualizar nodo maestro (si existe) y guardar campos que vengan en el payload
         try:
-            node = Node.objects.get(codigo=payload.get("codigo_nodo_maestro"))
-            now = timezone.now()
+            readings_collection("lecturas_sensores").insert_one(mongo_doc)
+        except Exception as e:
+            return Response({'detail': 'Error al insertar en MongoDB', 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # preferir nodo autenticado por token; si no, fallback por código
+        node = nodo_auth or Node.objects.filter(codigo=payload.get("codigo_nodo_maestro")).first()
+        now = timezone.now()
+        if node:
             node.last_seen = now
             # marcar activo por defecto al recibir ingestión, salvo que el payload especifique otro estado
             node.estado = payload.get("estado", "activo")
@@ -151,8 +171,9 @@ class NodeIngestView(views.APIView):
                 update_fields.append("lng")
 
             node.save(update_fields=list(dict.fromkeys(update_fields)))
-        except Node.DoesNotExist:
-            node = None
+        else:
+            # si no hubo nodo (improbable porque auth debería darlo), seguir igualmente
+            pass
 
         # actualizar nodos secundarios presentes y marcar como inactivos los ausentes
         # primero actualizar los que vienen en el payload

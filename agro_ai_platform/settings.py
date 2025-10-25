@@ -24,6 +24,7 @@ DEBUG = os.getenv('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
 
 INSTALLED_APPS = [
+    'corsheaders',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -44,9 +45,11 @@ INSTALLED_APPS = [
     'tasks',
     'drf_spectacular',
     'drf_spectacular_sidecar',
+    'brain',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -133,3 +136,9 @@ SPECTACULAR_SETTINGS = {
 # MongoDB (telemetría de sensores)
 MONGO_URL = os.getenv('MONGO_URL', 'mongodb://localhost:27017')
 MONGO_DB = os.getenv('MONGO_DB', 'agro_ai')
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://59l9xs00-5173.brs.devtunnels.ms",
+]
