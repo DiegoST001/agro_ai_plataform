@@ -82,7 +82,7 @@ class Prospecto(models.Model):
     ubicacion_parcela = models.TextField()
     descripcion_terreno = models.TextField()
     fecha_solicitud = models.DateTimeField(auto_now_add=True)
-    estado = models.CharField(max_length=32, default='pendiente')  # pendiente, aprobado, rechazado
+    estado = models.CharField(max_length=32, default='pendiente') 
 
     def __str__(self):
         return f"{self.nombre_completo} ({self.correo})"

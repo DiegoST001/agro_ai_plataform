@@ -14,48 +14,66 @@ from parcels.models import Parcela
     tags=['Tareas'],
     summary='Listar / crear tareas (global)',
     description=(
-        "GET /tareas/:\n"
-        "- Devuelve la lista global de tareas.\n"
-        "- Admin/Superadmin/Técnico: ven todas las tareas.\n"
-        "- Agricultor: solo tareas pertenecientes a sus parcelas.\n\n"
-        "POST /tareas/:\n"
-        "- Crea una nueva tarea. Body JSON esperado:\n"
-        "  { \"parcela_id\": <int>, \"tipo\": <str>, \"descripcion\": <str>, \"fecha_programada\": <iso-datetime>, \"estado\": <str>, \"origen\": <'manual'|'ia'>, \"recomendacion_id\": <int?> }\n"
-        "- Requiere permiso 'tareas.crear' y ser propietario de la parcela (o rol admin/tecnico).\n\n"
-        "Respuestas:\n"
+        "Operaciones sobre el recurso Tarea (global).\n\n"
+        "GET /api/tareas/:\n"
+        "- Devuelve la lista global de tareas del sistema.\n"
+        "- Acceso: Admin / Superadmin / Técnico ven todas las tareas; Agricultor solo las tareas de sus parcelas.\n"
+        "- Soporta filtros por `estado` y ordenamiento (`ordering`).\n\n"
+        "POST /api/tareas/:\n"
+        "- Crea una tarea asociada a una parcela.\n"
+        "- Cuerpo JSON esperado (ejemplos abajo):\n"
+        "  {\n"
+        "    \"parcela_id\": <int>,            # id de la parcela (requerido)\n"
+        "    \"tipo\": <string>,              # p.ej. 'riego', 'fertilizacion' (requerido)\n"
+        "    \"descripcion\": <string>,       # texto descriptivo / puede incluir snapshot\n"
+        "    \"fecha_programada\": <datetime>,# ISO-8601\n"
+        "    \"estado\": <string>,            # 'pendiente'|'en_progreso'|'completada'|'cancelada'\n"
+        "    \"origen\": <'manual'|'ia'>      # 'ia' para recomendaciones generadas por el motor\n"
+        "  }\n\n"
+        "Notas importantes:\n"
+        "- Para `origen='ia'` la tarea se crea con `decision='pendiente'` y requiere que el usuario acepte/rechace.\n"
+        "- El sistema define AUTO_REJECT_DAYS = 3: un job programado puede auto-rechazar (soft-delete) recomendaciones IA pendientes después de ese plazo.\n\n"
+        "Códigos de respuesta:\n"
         "- 200: lista de tareas\n"
-        "- 201: objeto creado\n"
-        "- 400/403/404 según validación/permisos/recursos\n"
+        "- 201: tarea creada\n"
+        "- 400: error de validación (p.ej. parcela_id faltante)\n"
+        "- 403: permiso denegado\n"
+        "- 404: parcela no encontrada\n"
     ),
     parameters=[
-        OpenApiParameter(name='ordering', description='Ordenar por campo (ej: created_at)', required=False, type=OpenApiTypes.STR),
-        OpenApiParameter(name='estado', description='Filtrar por estado', required=False, type=OpenApiTypes.STR),
+        OpenApiParameter(name='ordering', description='Ordenar por campo (ej: created_at, -created_at)', required=False, type=OpenApiTypes.STR),
+        OpenApiParameter(name='estado', description='Filtrar por estado (pendiente|en_progreso|completada|cancelada)', required=False, type=OpenApiTypes.STR),
     ],
     request=TaskSerializer,
-    responses={200: TaskSerializer(many=True), 201: TaskSerializer},
+    responses={
+        200: TaskSerializer(many=True),
+        201: TaskSerializer,
+        400: OpenApiExample('Bad Request', value={"detail": "parcela_id es requerido."}),
+        403: OpenApiExample('Forbidden', value={"detail": "No tienes permiso para ver/crear tareas."}),
+        404: OpenApiExample('Not Found', value={"detail": "Parcela no encontrada."}),
+    },
     examples=[
         OpenApiExample(
             "Lista ejemplo",
-            summary="Respuesta ejemplo GET /tareas/",
+            summary="Respuesta ejemplo GET /api/tareas/",
             value=[{
                 "id": 10,
                 "parcela_id": 5,
-                "recomendacion_id": None,
                 "tipo": "riego",
                 "descripcion": "Regar sector norte 20 minutos",
                 "fecha_programada": "2025-10-25T07:00:00Z",
                 "estado": "pendiente",
                 "origen": "manual",
+                "decision": "pendiente",
                 "created_at": "2025-10-20T12:00:00Z",
                 "updated_at": "2025-10-20T12:00:00Z"
             }]
         ),
         OpenApiExample(
             "Crear ejemplo",
-            summary="Body ejemplo POST /tareas/",
+            summary="Body ejemplo POST /api/tareas/",
             value={
                 "parcela_id": 5,
-                "recomendacion_id": None,
                 "tipo": "riego",
                 "descripcion": "Regar sector norte 20 minutos",
                 "fecha_programada": "2025-10-25T07:00:00Z",
@@ -103,28 +121,38 @@ class TaskListCreateView(generics.ListCreateAPIView):
     tags=['Tareas'],
     summary='Listar / crear tareas por parcela',
     description=(
-        "Operaciones enfocadas a una parcela específica.\n\n"
-        "- GET /parcelas/{parcela_id}/tareas/: listado histórico de tareas para la parcela.\n"
-        "- POST /parcelas/{parcela_id}/tareas/: crear tarea asociada a la parcela indicada.\n\n"
-        "Acceso:\n- Admin/Superadmin/Técnico: acceso a cualquier parcela.\n- Agricultor: solo a sus parcelas.\n"
+        "Operaciones centradas en las tareas de una parcela específica.\n\n"
+        "Rutas:\n"
+        "- GET /api/parcelas/{parcela_id}/tareas/: devuelve el historial de tareas de la parcela.\n"
+        "- POST /api/parcelas/{parcela_id}/tareas/: crea una tarea ligada a la parcela indicada (NO incluir parcela_id en el body; el id se toma de la URL).\n\n"
+        "Acceso:\n"
+        "- Admin / Superadmin / Técnico: acceso completo.\n"
+        "- Agricultor: solo si es propietario de la parcela.\n\n"
+        "Cuerpo/Respuesta: mismo esquema que en el endpoint global, salvo que para POST el campo parcela_id no es necesario (y se ignora si está presente).\n"
     ),
     parameters=[
-        OpenApiParameter(name='parcela_id', description='ID de la parcela', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH),
+        OpenApiParameter(name='parcela_id', description='ID de la parcela (path)', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH),
     ],
     request=TaskSerializer,
-    responses={200: TaskSerializer(many=True), 201: TaskSerializer},
+    responses={
+        200: TaskSerializer(many=True),
+        201: TaskSerializer,
+        403: OpenApiExample('Forbidden', value={"detail": "No tienes permiso para ver/crear tareas en esta parcela."}),
+        404: OpenApiExample('Not Found', value={"detail": "Parcela no existe."}),
+    },
     examples=[
         OpenApiExample(
             "Lista parcela ejemplo",
+            summary="GET /api/parcelas/{parcela_id}/tareas/ ejemplo",
             value=[{
                 "id": 12,
                 "parcela_id": 7,
-                "recomendacion_id": 3,
                 "tipo": "fertilizacion",
                 "descripcion": "Aplicar fertilizante NPK 10-10-10",
                 "fecha_programada": "2025-11-01T08:00:00Z",
                 "estado": "pendiente",
                 "origen": "ia",
+                "decision": "pendiente",
                 "created_at": "2025-10-20T12:00:00Z",
                 "updated_at": "2025-10-20T12:00:00Z"
             }]
@@ -167,29 +195,43 @@ class TaskByParcelaListCreateView(generics.ListCreateAPIView):
     tags=['Tareas'],
     summary='Detalle / actualizar / eliminar tarea',
     description=(
-        "Operaciones sobre una tarea individual.\n\n"
-        "- GET /tareas/{pk}/: recuperar tarea.\n"
-        "- PUT/PATCH /tareas/{pk}/: actualizar tarea (requiere permiso 'tareas.actualizar').\n"
-        "- DELETE /tareas/{pk}/: eliminar tarea (requiere permiso 'tareas.eliminar').\n\n"
-        "Acceso: admin/tecnico/superadmin o propietario de la parcela asociada.\n"
+        "Operaciones sobre una tarea individual identificada por su id (pk).\n\n"
+        "- GET /api/tareas/{pk}/: recuperar datos completos de la tarea.\n"
+        "- PUT/PATCH /api/tareas/{pk}/: actualizar (requiere 'tareas.actualizar').\n"
+        "- DELETE /api/tareas/{pk}/: eliminar (requiere 'tareas.eliminar').\n\n"
+        "Permisos y acceso:\n"
+        "- Admin / Superadmin / Técnico: acceso a cualquier tarea.\n"
+        "- Agricultor: solo si es propietario de la parcela vinculada.\n\n"
+        "Comportamiento especial para recomendaciones IA:\n"
+        "- Si la tarea tiene `origen='ia'` aparecerá con `decision='pendiente'` hasta que el usuario la acepte (decision='aceptada') o la rechace (decision='rechazada').\n"
+        "- Un job programado puede usar AUTO_REJECT_DAYS para auto-rechazar (soft-delete) recomendaciones IA pendientes tras ese periodo.\n\n"
+        "Respuestas:\n"
+        "- 200: objeto tarea\n"
+        "- 204: eliminado\n"
+        "- 403/404 según permisos o recurso\n"
     ),
     parameters=[
         OpenApiParameter(name='pk', description='ID de la tarea', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH),
     ],
     request=TaskSerializer,
-    responses={200: TaskSerializer, 204: None},
+    responses={
+        200: TaskSerializer,
+        204: None,
+        403: OpenApiExample('Forbidden', value={"detail": "No tienes permiso sobre esta tarea."}),
+        404: OpenApiExample('Not Found', value={"detail": "Tarea no encontrada."}),
+    },
     examples=[
         OpenApiExample(
             "Detalle ejemplo",
             value={
                 "id": 12,
                 "parcela_id": 7,
-                "recomendacion_id": 3,
                 "tipo": "fertilizacion",
                 "descripcion": "Aplicar fertilizante NPK 10-10-10",
                 "fecha_programada": "2025-11-01T08:00:00Z",
                 "estado": "pendiente",
                 "origen": "ia",
+                "decision": "pendiente",
                 "created_at": "2025-10-20T12:00:00Z",
                 "updated_at": "2025-10-20T12:00:00Z"
             }

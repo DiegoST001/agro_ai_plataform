@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "ai",
     'nodes',
     'recommendations',
+    'crops',
     # 'tokensapp',
     'tasks',
     'drf_spectacular',

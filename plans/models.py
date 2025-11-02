@@ -1,6 +1,5 @@
 from django.db import models
 from datetime import datetime, time, timedelta
-import pytz
 from django.utils import timezone
 
 class Plan(models.Model):

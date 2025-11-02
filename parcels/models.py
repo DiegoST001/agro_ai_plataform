@@ -1,71 +1,13 @@
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
+from datetime import timedelta
 
-
-class Cultivo(models.Model):
-    nombre = models.CharField(max_length=50, unique=True)  # ej: "Palta", "Papaya"
-    descripcion = models.TextField(blank=True, null=True)
-
-    def __str__(self):
-        return self.nombre
-
-
-class Variedad(models.Model):
-    cultivo = models.ForeignKey(Cultivo, on_delete=models.CASCADE, related_name='variedades')
-    nombre = models.CharField(max_length=50)  # ej: "Hass", "Red Lady"
-    descripcion = models.TextField(blank=True, null=True)
-
-    class Meta:
-        unique_together = ('cultivo', 'nombre')
-
-    def __str__(self):
-        return f"{self.nombre} ({self.cultivo.nombre})"
-
-
-class Etapa(models.Model):
-    variedad = models.ForeignKey(Variedad, on_delete=models.CASCADE, related_name='etapas')
-    nombre = models.CharField(max_length=50)
-    orden = models.PositiveIntegerField(default=1)
-    descripcion = models.TextField(blank=True, null=True)
-
-    # optional: duración estimada en días para cálculo automático de siguiente etapa
-    duracion_estimada_dias = models.PositiveIntegerField(null=True, blank=True)
-
-    # nuevo: marcar si la etapa está disponible/activa globalmente
-    activo = models.BooleanField(default=True)
-
-    class Meta:
-        unique_together = ('variedad', 'nombre')
-        ordering = ['orden']
-
-    def __str__(self):
-        return f"{self.nombre} - {self.variedad.nombre}"
-
-
-class ReglaPorEtapa(models.Model):
-    """
-    Reglas técnicas por etapa/variedad. Motor 'cerebro' las consumirá para evaluar umbrales.
-    """
-    etapa = models.ForeignKey(Etapa, on_delete=models.CASCADE, related_name='reglas')
-    parametro = models.CharField(max_length=100)   # ej: 'temperatura_aire', 'humedad_suelo'
-    minimo = models.FloatField(null=True, blank=True)
-    maximo = models.FloatField(null=True, blank=True)
-    accion_si_menor = models.TextField(blank=True, null=True)
-    accion_si_mayor = models.TextField(blank=True, null=True)
-    activo = models.BooleanField(default=True)
-    prioridad = models.IntegerField(default=0)
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
-    effective_from = models.DateField(null=True, blank=True)
-    effective_to = models.DateField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['-prioridad', 'id']
-
-    def __str__(self):
-        return f"Regla {self.parametro} [{self.etapa.nombre}] (activo={self.activo})"
-
+# Removed: Cultivo, Variedad, Etapa, ReglaPorEtapa moved to app `crops`
+# -------------------------------------------------------------------
+# Ahora `parcels` solo define Parcela y Ciclo; referencias a cultivo/variedad/etapa
+# apuntan a 'crops.*' para reutilizar las tablas/modelos en la nueva app.
+# -------------------------------------------------------------------
 
 class Parcela(models.Model):
     usuario = models.ForeignKey(
@@ -80,14 +22,90 @@ class Parcela(models.Model):
     longitud = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     altitud = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
 
-    cultivo = models.ForeignKey(Cultivo, on_delete=models.SET_NULL, null=True, blank=True)
-    variedad = models.ForeignKey(Variedad, on_delete=models.SET_NULL, null=True, blank=True)
+    # Nota: los modelos Cultivo/Variedad/Etapa/ReglaPorEtapa fueron movidos a la app 'crops'.
+    # La información de cultivo/variedad/etapa ahora vive en el modelo Ciclo (histórico por campaña).
 
-    etapa_actual = models.ForeignKey(Etapa, on_delete=models.SET_NULL, null=True, blank=True, related_name='parcelas_en_etapa')
-    etapa_inicio = models.DateField(null=True, blank=True)
-
+    etapa_inicio = models.DateField(null=True, blank=True)  # opcional
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f'{self.nombre} ({self.usuario_id})'
+
+
+class Ciclo(models.Model):
+    ESTADO_CHOICES = (
+        ('activo', 'Activo'),
+        ('cerrado', 'Cerrado'),
+    )
+
+    parcela = models.ForeignKey(Parcela, on_delete=models.CASCADE, related_name='ciclos')
+    cultivo = models.ForeignKey('crops.Cultivo', on_delete=models.SET_NULL, null=True, blank=True)
+    variedad = models.ForeignKey('crops.Variedad', on_delete=models.SET_NULL, null=True, blank=True)
+
+    etapa_actual = models.ForeignKey('crops.Etapa', on_delete=models.SET_NULL, null=True, blank=True, related_name='ciclos_en_etapa')
+    etapa_inicio = models.DateField(null=True, blank=True)
+
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='activo')
+    fecha_cierre = models.DateField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Ciclo {self.pk} - {self.parcela.nombre} ({self.cultivo.nombre if self.cultivo else "sin cultivo"})'
+
+    def is_active(self) -> bool:
+        return self.estado == 'activo'
+
+    def close(self, fecha=None):
+        """Marca el ciclo como cerrado."""
+        if self.estado == 'cerrado':
+            return False
+        self.estado = 'cerrado'
+        self.fecha_cierre = fecha or timezone.now().date()
+        self.save(update_fields=['estado', 'fecha_cierre', 'updated_at'])
+        return True
+
+    def advance_etapa_if_needed(self, now=None) -> bool:
+        """
+        Avanza a la siguiente etapa si la etapa_actual cumplió su duración_estimada_dias.
+        Retorna True si se avanzó.
+        """
+        if not self.etapa_actual or not self.is_active():
+            return False
+
+        dur = getattr(self.etapa_actual, 'duracion_estimada_dias', None)
+        if not dur:
+            return False
+
+        now = (now or timezone.now()).date()
+        if not self.etapa_inicio:
+            # inicializar etapa_inicio si no existe
+            self.etapa_inicio = now
+            self.save(update_fields=['etapa_inicio'])
+            return False
+
+        end_date = self.etapa_inicio + timedelta(days=int(dur))
+        if now < end_date:
+            return False
+
+        # buscar siguiente etapa activa por orden (usando modelo Etapa desde crops)
+        from django.apps import apps
+        Etapa = apps.get_model('crops', 'Etapa')
+        siguiente = Etapa.objects.filter(
+            variedad=self.etapa_actual.variedad,
+            orden__gt=self.etapa_actual.orden,
+            activo=True
+        ).order_by('orden').first()
+
+        if not siguiente:
+            return False
+
+        self.etapa_actual = siguiente
+        self.etapa_inicio = end_date
+        self.save(update_fields=['etapa_actual', 'etapa_inicio', 'updated_at'])
+        return True

@@ -1,5 +1,11 @@
 from django.contrib import admin
-from .models import Cultivo, Variedad, Etapa, ReglaPorEtapa, Parcela
+from .models import Parcela, Ciclo
+
+class CicloInline(admin.TabularInline):
+    model = Ciclo
+    extra = 0
+    fields = ('id', 'cultivo', 'variedad', 'etapa_actual', 'etapa_inicio', 'estado', 'fecha_cierre', 'created_at')
+    readonly_fields = ('created_at',)
 
 @admin.register(Parcela)
 class ParcelaAdmin(admin.ModelAdmin):
@@ -7,30 +13,21 @@ class ParcelaAdmin(admin.ModelAdmin):
         'id',
         'nombre',
         'usuario',
-        'cultivo',
-        'variedad',
         'tamano_hectareas',
         'ubicacion',
     )
     search_fields = (
         'nombre',
-        'cultivo__nombre',
-        'variedad__nombre',
         'usuario__username',
     )
     list_filter = (
-        'cultivo',
-        'variedad',
         'usuario',
     )
     ordering = ('id',)
+    inlines = [CicloInline]
 
-@admin.register(Etapa)
-class EtapaAdmin(admin.ModelAdmin):
-    list_display = ('id','nombre','variedad','orden','duracion_estimada_dias')
-
-@admin.register(ReglaPorEtapa)
-class ReglaPorEtapaAdmin(admin.ModelAdmin):
-    list_display = ('id','parametro','etapa','minimo','maximo','activo','prioridad','created_by','created_at')
-    list_filter = ('activo','parametro','etapa__variedad__cultivo')
-    search_fields = ('parametro','accion_si_mayor','accion_si_menor')
+@admin.register(Ciclo)
+class CicloAdmin(admin.ModelAdmin):
+    list_display = ('id', 'parcela', 'cultivo', 'variedad', 'etapa_actual', 'estado', 'etapa_inicio', 'fecha_cierre')
+    list_filter = ('estado', 'cultivo', 'variedad')
+    search_fields = ('parcela__nombre',)

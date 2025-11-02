@@ -5,21 +5,26 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, Sp
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('auth/', include('authentication.urls')),
+
+    # API apps
     path('api/', include('parcels.urls')),
     path('api/', include('plans.urls')),
-    path('api/', include('recommendations.urls')),  # agregado: endpoints de recomendaciones (ajusta a 'recomendaciones' si tu app usa nombre en español)
+    path('api/', include('recommendations.urls')),  # endpoints de recomendaciones
     path('api/', include('nodes.urls')),       # ingesta de nodos
-    path('api/', include('tasks.urls')),       # agregado: endpoints de tareas
-    # path('api/', include('alerts.urls')),
-    path('api/admin/', include('users.admin_urls')),    # gestión de usuarios y recursos admin
-    path('api/rbac/', include('users.rbac_urls')),      # gestión de roles/permisos
-    path('api/user/', include('users.user_urls')),  # endpoints para clientes (perfil, etc.)
+    path('api/', include('tasks.urls')),       # endpoints de tareas
 
-    path("api/ai/", include("ai.urls")),  # AI endpoints
+    # crops app (namespace y prefijo para evitar colisiones con otras apps)
+    path('api/', include(('crops.urls', 'crops'), namespace='crops')),
 
-    # agregar brain API
+    # admin / rbac / user
+    path('api/admin/', include('users.admin_urls')),
+    path('api/rbac/', include('users.rbac_urls')),
+    path('api/user/', include('users.user_urls')),
+
+    path("api/ai/", include("ai.urls")),
     path('api/brain/', include('brain.urls')),
 
+    # OpenAPI / docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),

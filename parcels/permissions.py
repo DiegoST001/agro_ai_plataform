@@ -5,7 +5,7 @@ de control para caching/resolución de ids.
 """
 from functools import lru_cache
 from django.contrib.auth.models import AnonymousUser
-from users.models import RolesOperaciones, UserOperacionOverride, Modulo, Operacion
+from users.models import Modulo, Operacion
 from users.permissions import (
     tiene_permiso as _tiene_permiso,
     role_name,

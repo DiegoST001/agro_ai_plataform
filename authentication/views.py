@@ -1,4 +1,4 @@
-from rest_framework import status, views, permissions
+from rest_framework import status, views, permissions, generics
 from rest_framework.response import Response
 from django.contrib.auth import authenticate
 from rest_framework.authtoken.models import Token
@@ -6,7 +6,7 @@ from rest_framework.authentication import TokenAuthentication, SessionAuthentica
 from drf_spectacular.utils import extend_schema, OpenApiExample, extend_schema_view
 from .serializers import UserRegisterSerializer, AccountSerializer, PerfilUpdateSerializer
 from .models import User
-from users.models import PerfilUsuario
+from users.models import PerfilUsuario, RolesOperaciones  # modelo que relaciona rol->modulo->operacion
 
 
 
@@ -86,22 +86,40 @@ class LoginView(views.APIView):
             return Response({'detail': 'Credenciales inválidas'}, status=status.HTTP_400_BAD_REQUEST)
 
         token, _ = Token.objects.get_or_create(user=user)
+
+        # construir mapa de permisos por módulo para el rol del usuario
+        perms_qs = RolesOperaciones.objects.filter(rol=user.rol).select_related('modulo','operacion')
+        permissions_map = {}
+        for r in perms_qs:
+            m = r.modulo.nombre
+            permissions_map.setdefault(m, []).append(r.operacion.nombre)
+
+        rol_nombre = getattr(getattr(user, 'rol', None), 'nombre', None)
         return Response({
             'token': token.key,
-            'user': {'user_id': user.id, 'username': user.username, 'email': user.email}
+            'user': {
+                'user_id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'rol': rol_nombre,
+                'permissions': permissions_map,   # <- map módulo -> [operacion,...]
+            }
         }, status=status.HTTP_200_OK)
 
 @extend_schema(
     tags=['Auth'],
     summary='Cerrar sesión (invalidar token)',
     description='Cierra la sesión del usuario actual e invalida el token de autenticación.',
-    responses={204: OpenApiExample('Logout exitoso', value={})}
+    request=None,
+    responses={204: None},
+    examples=[OpenApiExample('Logout exitoso', value={})]
 )
-class LogoutView(views.APIView):
+class LogoutView(generics.GenericAPIView):
     authentication_classes = [TokenAuthentication, SessionAuthentication]
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = None
 
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         if getattr(request, 'auth', None):
             request.auth.delete()
         else:

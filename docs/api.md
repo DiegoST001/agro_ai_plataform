@@ -1,7 +1,7 @@
 # Agro AI Platform – Documentación de la API
 
-Versión: 0.2  
-Última actualización: 2025-10-23
+Versión: 0.3  
+Última actualización: 2025-10-25
 
 Usuarios/clientes: Authorization: Token ...
 Nodos: Authorization: Node ...
@@ -15,6 +15,11 @@ Notas
 
 ## Base URL
 - Desarrollo local: http://127.0.0.1:8000/
+
+## Endpoints públicos
+- GET /api/planes/public/  → Catálogo de planes (sin autenticación)
+- GET /api/user/total/public/  → Total de usuarios registrados (para welcome)
+- POST /api/user/prospectos/public/  → Registrar prospecto (sin autenticación)
 
 ## Autenticación
 - TokenAuthentication (DRF authtoken). Login devuelve: { "token": "..." , "user": {...} }.
@@ -301,6 +306,10 @@ DELETE /api/parcelas/{id}/  (protegido)
 
 ## Planes
 
+### Catálogo público (sin autenticación)
+GET /api/planes/public/
+- 200: [Plan]
+
 ### Suscripciones por parcela
 GET /api/parcelas/{parcela_id}/planes/  (protegido)
 - 200: [ { "id":11, "parcela_id":7, "plan_id":2, "estado":"activo", "fecha_inicio":"...", "fecha_fin":null }, ... ]
@@ -316,10 +325,10 @@ PUT /api/parcelas/planes/{id}/  (protegido)
 PATCH /api/parcelas/planes/{id}/  (protegido)
 DELETE /api/parcelas/planes/{id}/  (protegido)
 
-### Planes (catálogo)
-GET /api/planes/  (público)
+### Planes (CRUD protegido)
+GET /api/planes/  (protegido)
 POST /api/planes/  (protegido, admin)
-GET /api/planes/{id}/  (público)
+GET /api/planes/{id}/  (protegido)
 PUT /api/planes/{id}/  (protegido, admin)
 PATCH /api/planes/{id}/  (protegido, admin)
 DELETE /api/planes/{id}/  (protegido, admin)
@@ -479,7 +488,7 @@ Modelo PerfilUsuario
   "experiencia_agricola": 5
 }
 
-Respuesta GET /auth/me/ (relacionado)
+Respuesta GET /api/user/profile/ (relacionado)
 {
   "id": 2, "username": "agri01", "email":"...", "rol":"agricultor",
   "profile": PerfilUsuario
@@ -496,31 +505,83 @@ GET /api/user/prospectos/  (protegido, admin)
 Detalle
 GET /api/user/prospectos/{id}/  (protegido, admin)
 
+Registrar prospecto (público)
+POST /api/user/prospectos/public/  (público)
+- Body:
+  {
+    "nombre_completo": "Juan Pérez",
+    "dni": "12345678",
+    "correo": "juan@email.com",
+    "telefono": "999888777",
+    "ubicacion_parcela": "Cusco, sector 5",
+    "descripcion_terreno": "Terreno arcilloso, 2 hectáreas"
+  }
+- 201: { "msg": "Prospecto registrado" }
+- 400: { "error":"Correo ya registrado" }
+
 Aceptar prospecto y crear agricultor
 POST /api/user/prospectos/{id}/aceptar/  (protegido, admin)
-- Body: { "username":"nuevo", "password":"***", "correo":"opcional@email.com" }
-- 201: { "msg": "Agricultor creado" }
-- 400: { "error":"Username ya existe" }
+- Body:
+  {
+    "username":"nuevo",
+    "password":"***",
+    "email":"opcional@email.com"   // opcional; si no se envía se usa el correo del prospecto
+  }
+- 201: { "msg": "Agricultor creado", "user_id": 123 }
+- 400: { "error":"Username ya existe / Correo ya existe / username/password son requeridos" }
+- 404: { "detail":"Prospecto no encontrado." }
 
 ---
 
 ## Auth
 
 ### Login de usuario
-POST /auth/login/
-- Body: { "username":"agri01", "password":"TuPasswordSegura" }
-- 200: { "token":"...", "user": { "user_id": 12, "username":"agri01", "email":"..." } }
+POST /api/auth/login/
+- Body (recomendado):
+  { "login":"agri01", "password":"TuPasswordSegura" }
+  ó
+  { "login":"a@b.com", "password":"TuPasswordSegura" }
+- Compatibilidad (legacy): también acepta { "username": "...", "password":"..." } o { "email":"...", "password":"..." }
+- 200:
+  {
+    "token":"...",
+    "user": {
+      "user_id": 12,
+      "username":"agri01",
+      "email":"...",
+      "rol":"agricultor",                 // nombre del rol
+      "permissions": {                    // opcional: mapa módulo -> [operaciones]
+        "parcelas": ["ver","crear","actualizar"],
+        "planes": ["ver","crear"]
+      }
+    }
+  }
+- 400: { "detail":"Credenciales inválidas" }
 
 ### Cerrar sesión
-POST /auth/logout/  (protegido)
+POST /api/auth/logout/  (protegido)
 - 204
 
 ### Token (si está habilitado)
-POST /auth/token/
+POST /api/auth/token/
 - Body: { "username":"...", "password":"..." }
 - 200: { "token":"..." }
 
 ---
+
+## Admin KPIs (usuarios)
+GET /api/user/kpi/  (protegido, admin)
+- 200:
+  {
+    "total": 120,
+    "activos": 110,
+    "inactivos": 10,
+    "por_rol": { "administrador": 5, "agricultor": 100, "tecnico": 15 },
+    "ultimo_registro": "2025-10-23T14:22:00Z"
+  }
+
+---
+
 ## Notas de integración frontend
 
 - Tipados sugeridos

@@ -1,16 +1,20 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, time
 from django.utils import timezone
 from rest_framework import generics, permissions, status, views
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiExample
+from rest_framework.exceptions import PermissionDenied, NotFound 
 from .auth import NodeTokenAuthentication
 from .models import Node, NodoSecundario, Parcela
 from agro_ai_platform.mongo import get_db
 from .serializers import NodeSerializer, NodoSecundarioSerializer
 # reemplazado: import directo de helpers de permisos del app nodes (reusa users.permissions)
-from .permissions import tiene_permiso, role_name, HasOperationPermission, OwnsObjectOrAdmin
-from rest_framework.exceptions import PermissionDenied, NotFound
+from .permissions import tiene_permiso, role_name, HasOperationPermission
+from .permissions import OwnsNodeOrAdmin  # <- nuevo
 
+# márgenes por defecto (usados en Swagger y en la vista)
+PRE_MARGIN_DEFAULT = 10
+POST_MARGIN_DEFAULT = 20
 
 def readings_collection(name):
     # usa get_db() de forma lazy para evitar import-time issues
@@ -20,12 +24,27 @@ def readings_collection(name):
 @extend_schema(
     tags=['Ingesta'],
     summary='Ingesta de datos desde nodo maestro',
-    description="Recibe datos de sensores enviados por el nodo maestro y los almacena en MongoDB. El payload puede incluir información opcional.",
+    description=(
+        "Recibe datos de sensores enviados por el nodo maestro y los almacena en MongoDB (solo lecturas y sensores). "
+        "Autenticación: token de nodo (NodeTokenAuthentication) — request.node y request.auth deben estar presentes.\n\n"
+        "Comportamiento y validaciones:\n"
+        "- El endpoint valida el plan activo de la parcela asociada al nodo (ParcelaPlan -> Plan).\n"
+        "- Si existe un plan activo se aplican:\n"
+        "  * Límite máximo de ingestiones por día (plan.limite_lecturas_dia o veces_por_dia).\n"
+        "  * Validación de ventanas horarias programadas (plan.get_schedule_for_date) con ventana "
+        f"(−{PRE_MARGIN_DEFAULT}min, +{POST_MARGIN_DEFAULT}min) por horario.\n"
+        "- Si la ingestión excede el límite diario o está fuera de todas las ventanas válidas, retorna 429 o 400.\n\n"
+        "Importante:\n"
+        "- NO envíes 'parcela_id'; se infiere del nodo autenticado. "
+        "Opcionalmente puedes enviar 'codigo_nodo_maestro', pero se usará el del token.\n\n"
+        "Datos almacenados en MongoDB:\n"
+        "- Documento: seed_tag, parcela_id (derivado), codigo_nodo_maestro (derivado), timestamp y lecturas[].\n"
+        "- Cada lectura: nodo_codigo, last_seen, sensores[]. NO se guarda 'bateria' en MongoDB.\n"
+    ),
     request={
         "type": "object",
         "properties": {
-            "parcela_id": {"type": "integer", "example": 1},
-            "codigo_nodo_maestro": {"type": "string", "example": "NODE-001"},
+            "codigo_nodo_maestro": {"type": "string", "example": "NODE-001", "description": "Opcional; se usa el del token si no se envía."},
             "timestamp": {"type": "string", "format": "date-time", "example": "2025-09-24T18:30:00Z"},
             "last_seen": {"type": "string", "format": "date-time", "example": "2025-10-01T07:59:50Z"},
             "estado": {"type": "string", "example": "activo"},
@@ -38,7 +57,7 @@ def readings_collection(name):
                     "type": "object",
                     "properties": {
                         "nodo_codigo": {"type": "string", "example": "NODE-01"},
-                        "bateria": {"type": "integer", "example": 95},
+                        "bateria": {"type": "integer", "example": 95, "description": "Aceptada en payload pero NO persistida en MongoDB; se guarda en Postgres."},
                         "last_seen": {"type": "string", "format": "date-time", "example": "2025-10-01T07:59:50Z"},
                         "sensores": {
                             "type": "array",
@@ -51,28 +70,22 @@ def readings_collection(name):
                                 }
                             }
                         }
-                    }
+                    },
+                    "required": ["nodo_codigo", "sensores"]
                 }
             }
         },
-        "required": ["parcela_id", "codigo_nodo_maestro", "timestamp", "lecturas"]
+        "required": ["timestamp", "lecturas"]
     },
     examples=[
         OpenApiExample(
-            'Payload ejemplo',
+            'Payload mínimo (sin parcela_id)',
             value={
-                "parcela_id": 5,
                 "codigo_nodo_maestro": "NODE-001",
-                "last_seen": "2025-10-01T07:59:50Z",
-                "estado": "activo",
-                "lat": "-13.53",
-                "lng": "-70.65",
-                "senal": "-70dBm",
                 "timestamp": "2025-10-01T08:00:00Z",
                 "lecturas": [
                     {
                         "nodo_codigo": "NODE-01",
-                        "bateria": 95,
                         "last_seen": "2025-10-01T07:59:50Z",
                         "sensores": [
                             { "sensor": "temperatura", "valor": 22.5, "unidad": "°C" },
@@ -80,23 +93,18 @@ def readings_collection(name):
                         ]
                     }
                 ]
-            }
+            },
+            request_only=True
         )
-    ],
-    responses={
-        200: OpenApiExample(
-            'Respuesta exitosa',
-            value={"detail": "OK"}
-        ),
-        400: OpenApiExample(
-            'Error',
-            value={"detail": "Payload inválido"}
-        )
-    }
+    ]
 )
 class NodeIngestView(views.APIView):
     authentication_classes = [NodeTokenAuthentication]
     permission_classes = [permissions.AllowAny]
+
+    # márgenes por defecto para ventana de schedule (antes / después)
+    PRE_MARGIN_MINUTES = PRE_MARGIN_DEFAULT
+    POST_MARGIN_MINUTES = POST_MARGIN_DEFAULT
 
     def post(self, request):
         # 0) autenticación por token de nodo (NodeTokenAuthentication debe setear request.node y request.auth)
@@ -113,70 +121,140 @@ class NodeIngestView(views.APIView):
                 ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             except Exception:
                 ts = None
+        ts = ts or timezone.now()
 
+        # el nodo viene del token; opcionalmente cae el código en payload
+        node = nodo_auth
+        parcela = getattr(node, "parcela", None)
+        if not node or not parcela:
+            return Response({'detail': 'Nodo o parcela desconocidos'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # consultar plan activo de la parcela (si existe)
+        try:
+            from plans.models import ParcelaPlan
+        except Exception:
+            ParcelaPlan = None
+
+        parcela_plan = None
+        if ParcelaPlan:
+            parcela_plan = ParcelaPlan.objects.select_related('plan').filter(parcela=parcela, estado='activo').first()
+
+        # si hay plan, validar ventanas y límites
+        if parcela_plan and parcela_plan.plan:
+            plan = parcela_plan.plan
+            # determinar límite diario
+            limite = getattr(plan, 'limite_lecturas_dia', None) or getattr(plan, 'veces_por_dia', None)
+            try:
+                limite = int(limite) if limite is not None else None
+            except Exception:
+                limite = None
+
+            # contar ingestiones del día para este maestro+parcela en Mongo
+            tz = timezone.get_current_timezone()
+            # ts_local: timestamp en la zona horaria actual
+            ts_local = ts.astimezone(tz) if getattr(ts, 'tzinfo', None) else timezone.make_aware(ts, tz)
+            # límites del día (00:00 y 24:00) en esa zona horaria
+            start_naive = datetime.combine(ts_local.date(), time.min)
+            end_naive = datetime.combine(ts_local.date() + timedelta(days=1), time.min)
+            start_day = timezone.make_aware(start_naive, tz)
+            end_day = timezone.make_aware(end_naive, tz)
+
+            mongo_q = {
+                "codigo_nodo_maestro": node.codigo,
+                "parcela_id": parcela.id,
+                "timestamp": {"$gte": start_day, "$lt": end_day}
+            }
+            try:
+                current_count = readings_collection("lecturas_sensores").count_documents(mongo_q)
+            except Exception:
+                current_count = 0
+
+            if limite is not None and current_count >= limite:
+                return Response({
+                    "detail": "Límite de lecturas por día alcanzado para este nodo/parcela según el plan.",
+                    "limit": limite,
+                    "current": current_count
+                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+            # validar que timestamp esté dentro de alguna ventana programada (si el plan define horarios)
+            schedule = []
+            try:
+                schedule = plan.get_schedule_for_date(ts_local.date(), tz=tz)
+            except Exception:
+                schedule = []
+
+            if schedule:
+                pre = timedelta(minutes=self.PRE_MARGIN_MINUTES)
+                post = timedelta(minutes=self.POST_MARGIN_MINUTES)
+                in_window = False
+                for scheduled_dt in schedule:
+                    # scheduled_dt ya es tz-aware por get_schedule_for_date
+                    window_start = scheduled_dt - pre
+                    window_end = scheduled_dt + post
+                    if window_start <= ts_local <= window_end:
+                        in_window = True
+                        break
+                if not in_window:
+                    return Response({
+                        "detail": "Timestamp fuera de ventanas programadas para hoy.",
+                        "timestamp": ts.isoformat(),
+                        "windows": [
+                            {"start": (sd - pre).isoformat(), "center": sd.isoformat(), "end": (sd + post).isoformat()}
+                            for sd in schedule
+                        ]
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+        # construir documento mongo (SIN 'bateria') y sin leer parcela_id del payload
         mongo_doc = {
-            "seed_tag": payload.get("seed_tag", "demo"),
-            "parcela_id": payload.get("parcela_id"),
-            "codigo_nodo_maestro": payload.get("codigo_nodo_maestro"),
-            "timestamp": ts or timezone.now(),
+            "seed_tag": (request.data or {}).get("seed_tag", "demo"),
+            "parcela_id": parcela.id,                 # derivado del nodo
+            "codigo_nodo_maestro": node.codigo,       # derivado del nodo
+            "timestamp": ts,
             "lecturas": []
         }
-        # recopilar códigos presentes en el payload
         present_codes = set()
-        for lectura in payload.get("lecturas", []):
+        for lectura in (request.data or {}).get("lecturas", []):
             codigo = lectura.get("nodo_codigo")
             lectura_doc = {
                 "nodo_codigo": codigo,
                 "last_seen": lectura.get("last_seen"),
                 "sensores": lectura.get("sensores", []),
             }
-            if "bateria" in lectura:
-                lectura_doc["bateria"] = lectura.get("bateria")
             mongo_doc["lecturas"].append(lectura_doc)
             if codigo:
                 present_codes.add(codigo)
-        try:
-            readings_collection("lecturas_sensores").insert_one(mongo_doc)
-        except Exception as e:
-            return Response({'detail': 'Error al insertar en MongoDB', 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        # preferir nodo autenticado por token; si no, fallback por código
-        node = nodo_auth or Node.objects.filter(codigo=payload.get("codigo_nodo_maestro")).first()
+        readings_collection("lecturas_sensores").insert_one(mongo_doc)
+        # actualizar maestro en Postgres (se mantiene la lógica anterior)
         now = timezone.now()
-        if node:
-            node.last_seen = now
-            # marcar activo por defecto al recibir ingestión, salvo que el payload especifique otro estado
-            node.estado = payload.get("estado", "activo")
-            update_fields = ["last_seen", "estado"]
+        node.last_seen = now
+        node.estado = payload.get("estado", "activo")
+        update_fields = ["last_seen", "estado"]
 
-            if "bateria" in payload and payload.get("bateria") is not None:
-                try:
-                    node.bateria = int(payload.get("bateria"))
-                    update_fields.append("bateria")
-                except (ValueError, TypeError):
-                    pass
+        if "bateria" in payload and payload.get("bateria") is not None:
+            try:
+                node.bateria = int(payload.get("bateria"))
+                update_fields.append("bateria")
+            except (ValueError, TypeError):
+                pass
 
-            if "senal" in payload and payload.get("senal") is not None:
-                try:
-                    node.senal = int(payload.get("senal"))
-                    update_fields.append("senal")
-                except (ValueError, TypeError):
-                    pass
+        if "senal" in payload and payload.get("senal") is not None:
+            try:
+                node.senal = int(payload.get("senal"))
+                update_fields.append("senal")
+            except (ValueError, TypeError):
+                pass
 
-            if "lat" in payload and payload.get("lat") is not None:
-                node.lat = payload.get("lat")
-                update_fields.append("lat")
-            if "lng" in payload and payload.get("lng") is not None:
-                node.lng = payload.get("lng")
-                update_fields.append("lng")
+        if "lat" in payload and payload.get("lat") is not None:
+            node.lat = payload.get("lat")
+            update_fields.append("lat")
+        if "lng" in payload and payload.get("lng") is not None:
+            node.lng = payload.get("lng")
+            update_fields.append("lng")
 
-            node.save(update_fields=list(dict.fromkeys(update_fields)))
-        else:
-            # si no hubo nodo (improbable porque auth debería darlo), seguir igualmente
-            pass
+        node.save(update_fields=list(dict.fromkeys(update_fields)))
 
         # actualizar nodos secundarios presentes y marcar como inactivos los ausentes
-        # primero actualizar los que vienen en el payload
         for lectura in payload.get("lecturas", []):
             codigo_sec = lectura.get("nodo_codigo")
             if not codigo_sec:
@@ -184,19 +262,17 @@ class NodeIngestView(views.APIView):
             try:
                 nodo_sec = NodoSecundario.objects.get(codigo=codigo_sec)
                 changed_fields = []
-                # always update last_seen if provided
                 if lectura.get("last_seen") is not None:
                     try:
                         nodo_sec.last_seen = lectura.get("last_seen")
                         changed_fields.append("last_seen")
                     except Exception:
                         pass
-                # marcar activo por defecto si aparece en el payload (a menos que venga otro estado)
                 estado_val = lectura.get("estado", "activo")
                 if estado_val is not None:
                     nodo_sec.estado = estado_val
                     changed_fields.append("estado")
-                # batería (acepta 0)
+                # batería (acepta 0) -> se guarda en Postgres
                 if "bateria" in lectura and lectura.get("bateria") is not None:
                     try:
                         nodo_sec.bateria = int(lectura.get("bateria"))
@@ -208,13 +284,10 @@ class NodeIngestView(views.APIView):
             except NodoSecundario.DoesNotExist:
                 continue
 
-        # si conocemos el maestro, marcar como 'inactivo' los secundarios de ese maestro
-        # cuyo codigo NO esté en present_codes
         if node is not None:
             qs_absent = NodoSecundario.objects.filter(maestro=node)
             if present_codes:
                 qs_absent = qs_absent.exclude(codigo__in=list(present_codes))
-            # actualizar solo los que realmente cambien para evitar write churn
             qs_absent.update(estado="inactivo")
 
         return Response({"detail": "OK"}, status=status.HTTP_200_OK)
@@ -339,7 +412,7 @@ class NodeUpdateView(generics.UpdateAPIView):
     serializer_class = NodeSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsObjectOrAdmin()]
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsNodeOrAdmin()]  # <- cambio
 
     def get_queryset(self):
         user = self.request.user
@@ -417,8 +490,7 @@ class NodeDetailView(generics.RetrieveAPIView):
     serializer_class = NodeSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver'), OwnsObjectOrAdmin()]
-
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver'), OwnsNodeOrAdmin()]  # <- cambio
     def get_queryset(self):
         user = self.request.user
         if not tiene_permiso(user, 'nodos', 'ver'):
@@ -441,7 +513,7 @@ class NodeDeleteView(generics.DestroyAPIView):
     serializer_class = NodeSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'eliminar'), OwnsObjectOrAdmin()]
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'eliminar'), OwnsNodeOrAdmin()]  # <- cambio
 
     def get_queryset(self):
         user = self.request.user
@@ -460,7 +532,7 @@ class NodoSecundarioDeleteView(generics.DestroyAPIView):
     serializer_class = NodoSecundarioSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'eliminar'), OwnsObjectOrAdmin()]
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'eliminar'), OwnsNodeOrAdmin()]  # <- cambio
 
     def get_queryset(self):
         user = self.request.user
@@ -498,7 +570,7 @@ class NodoSecundarioDetailView(generics.RetrieveAPIView):
     serializer_class = NodoSecundarioSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver'), OwnsObjectOrAdmin()]
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'ver'), OwnsNodeOrAdmin()]  # <- cambio
 
     def get_queryset(self):
         user = self.request.user
@@ -519,7 +591,7 @@ class NodoSecundarioUpdateView(generics.UpdateAPIView):
     serializer_class = NodoSecundarioSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsObjectOrAdmin()]
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsNodeOrAdmin()]  # <- cambio
 
     def get_queryset(self):
         user = self.request.user

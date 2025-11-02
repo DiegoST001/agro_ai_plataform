@@ -177,7 +177,9 @@ class ParcelaPlanListView(generics.ListAPIView):
     description=(
         "Crea una nueva suscripción para la parcela indicada. Si existe una suscripción activa, "
         "se marcará como 'vencido' y se establecerá fecha_fin = hoy.\n\n"
-        "Body esperado: { \"plan_id\": <int> }\n\n"
+        "Body esperado: { \"plan_id\": <int>, \"fecha_inicio\": \"YYYY-MM-DD\" (opcional) }\n\n"
+        "Si se envía `fecha_inicio` la suscripción se iniciará en esa fecha; si no se envía, "
+        "la suscripción comenzará hoy.\n\n"
         "Permisos: requiere 'planes.crear' y ser propietario o admin."
     ),
     parameters=[
@@ -188,8 +190,8 @@ class ParcelaPlanListView(generics.ListAPIView):
     examples=[
         OpenApiExample(
             'Crear suscripción ejemplo',
-            description='Body ejemplo para cambiar el plan de una parcela',
-            value={"plan_id": 2},
+            description='Body ejemplo para cambiar el plan de una parcela (con inicio inmediato o programado)',
+            value={"plan_id": 2, "fecha_inicio": "2025-11-01"},
             request_only=True
         )
     ]
@@ -218,14 +220,28 @@ class ParcelaPlanCreateView(generics.CreateAPIView):
         if not plan:
             raise ValidationError({"plan_id": "plan_id es requerido."})
 
-        # cerrar plan activo anterior (si existe)
+        fecha_inicio = serializer.validated_data.get('fecha_inicio')  # puede ser None
+
+        # si ya existe un plan activo, no permitimos crear otro inmediatamente
         activo = ParcelaPlan.objects.filter(parcela=parcela, estado='activo').first()
         if activo:
-            activo.estado = 'vencido'
-            activo.fecha_fin = date.today()
-            activo.save()
+            if fecha_inicio and fecha_inicio > date.today():
+                # crear plan programado para iniciar en el futuro; no cerramos el activo actual
+                estado = 'programado'  # ajuste si el modelo usa otro nombre para estados programados
+                serializer.save(parcela=parcela, fecha_inicio=fecha_inicio, estado=estado)
+                return
+            # no se permite crear otro plan hasta que el activo termine
+            raise ValidationError({"detail": "Ya existe un plan activo en esta parcela. Si deseas programar el siguiente plan, indica 'fecha_inicio' con una fecha futura."})
 
-        serializer.save(parcela=parcela, fecha_inicio=date.today(), estado='activo')
+        # no hay plan activo -> crear activo o programado según fecha_inicio
+        if fecha_inicio and fecha_inicio > date.today():
+            estado = 'programado'
+            fecha = fecha_inicio
+        else:
+            estado = 'activo'
+            fecha = fecha_inicio if fecha_inicio else date.today()
+
+        serializer.save(parcela=parcela, fecha_inicio=fecha, estado=estado)
 
 @extend_schema(
     tags=['Planes'],
