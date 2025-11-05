@@ -33,16 +33,17 @@ class NodeSerializer(serializers.ModelSerializer):
             'token',
         ]
         extra_kwargs = {
-            'parcela': {'read_only': True},  # <-- Así no se requiere en el body
-            'codigo': {'read_only': True},   # El código también es automático
+            'parcela': {'read_only': True},
+            'codigo': {'read_only': True},
         }
 
     def get_nodos_secundarios(self, obj):
-        # Solo incluir secundarios si el contexto lo pide
+        secundarios_qs = obj.secundarios.all()
+        # Si el contexto pide incluir los secundarios, devolver la lista serializada
         if self.context.get('include_secundarios'):
-            secundarios = obj.secundarios.all()
-            return NodoSecundarioSerializer(secundarios, many=True).data
-        return None
+            return NodoSecundarioSerializer(secundarios_qs, many=True, context=self.context).data
+        # Por defecto devolver solo el contador (no null)
+        return {'count': secundarios_qs.count()}
 
     def get_token(self, obj):
         # obtiene el token más reciente válido/en_gracia

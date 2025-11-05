@@ -1,6 +1,7 @@
 from django.db import models
 from datetime import datetime, time, timedelta
 from django.utils import timezone
+from dateutil.relativedelta import relativedelta
 
 class Plan(models.Model):
     nombre = models.CharField(max_length=50, unique=True)
@@ -91,3 +92,17 @@ class ParcelaPlan(models.Model):
 
     def __str__(self):
         return f'{self.parcela_id} -> {self.plan.nombre} ({self.estado})'
+
+    def save(self, *args, **kwargs):
+        creating = self.pk is None
+        # si no hay fecha_inicio, usar hoy al crear
+        if creating and not self.fecha_inicio:
+            self.fecha_inicio = timezone.now().date()
+        # si no hay fecha_fin, fijar un mes después de fecha_inicio
+        if creating and not self.fecha_fin and self.fecha_inicio:
+            try:
+                self.fecha_fin = self.fecha_inicio + relativedelta(months=1)
+            except Exception:
+                # fallback: 30 días
+                self.fecha_fin = self.fecha_inicio + timedelta(days=30)
+        super().save(*args, **kwargs)

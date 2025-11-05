@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
 from rest_framework import generics, permissions, status, views
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, NotFound, ValidationError
@@ -222,16 +223,36 @@ class ParcelaPlanCreateView(generics.CreateAPIView):
 
         fecha_inicio = serializer.validated_data.get('fecha_inicio')  # puede ser None
 
-        # si ya existe un plan activo, no permitimos crear otro inmediatamente
+        # si ya existe un plan activo
         activo = ParcelaPlan.objects.filter(parcela=parcela, estado='activo').first()
         if activo:
-            if fecha_inicio and fecha_inicio > date.today():
-                # crear plan programado para iniciar en el futuro; no cerramos el activo actual
-                estado = 'programado'  # ajuste si el modelo usa otro nombre para estados programados
+            # determinar fecha de fin efectiva del plan activo
+            if activo.fecha_fin:
+                activo_end = activo.fecha_fin
+            else:
+                # fallback: si activo no tiene fecha_fin, asumir un mes desde su fecha_inicio
+                activo_end = (activo.fecha_inicio + relativedelta(months=1)) if activo.fecha_inicio else (date.today() + timedelta(days=30))
+
+            earliest_start = activo_end + timedelta(days=1)
+
+            if fecha_inicio:
+                # si se proporcionó fecha_inicio, debe ser posterior al fin del activo
+                if fecha_inicio <= activo_end:
+                    raise ValidationError({
+                        "detail": (
+                            f"Ya existe un plan activo hasta {activo_end.isoformat()}. "
+                            f"Indica 'fecha_inicio' >= {earliest_start.isoformat()} o deja vacío para programarlo automáticamente desde {earliest_start.isoformat()}."
+                        )
+                    })
+                # fecha_inicio válida -> programado
+                estado = 'programado'
                 serializer.save(parcela=parcela, fecha_inicio=fecha_inicio, estado=estado)
                 return
-            # no se permite crear otro plan hasta que el activo termine
-            raise ValidationError({"detail": "Ya existe un plan activo en esta parcela. Si deseas programar el siguiente plan, indica 'fecha_inicio' con una fecha futura."})
+            else:
+                # sin fecha_inicio -> programar automáticamente para empezar después del plan activo
+                estado = 'programado'
+                serializer.save(parcela=parcela, fecha_inicio=earliest_start, estado=estado)
+                return
 
         # no hay plan activo -> crear activo o programado según fecha_inicio
         if fecha_inicio and fecha_inicio > date.today():

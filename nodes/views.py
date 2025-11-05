@@ -11,6 +11,7 @@ from .serializers import NodeSerializer, NodoSecundarioSerializer
 # reemplazado: import directo de helpers de permisos del app nodes (reusa users.permissions)
 from .permissions import tiene_permiso, role_name, HasOperationPermission
 from .permissions import OwnsNodeOrAdmin  # <- nuevo
+from django.db.models import Q
 
 # márgenes por defecto (usados en Swagger y en la vista)
 PRE_MARGIN_DEFAULT = 10
@@ -123,13 +124,46 @@ class NodeIngestView(views.APIView):
                 ts = None
         ts = ts or timezone.now()
 
+        # NORMALIZAR zona y ts_local aquí para usar en la búsqueda de planes
+        tz = timezone.get_current_timezone()
+        ts_local = ts.astimezone(tz) if getattr(ts, 'tzinfo', None) else timezone.make_aware(ts, tz)
+
         # el nodo viene del token; opcionalmente cae el código en payload
         node = nodo_auth
         parcela = getattr(node, "parcela", None)
         if not node or not parcela:
             return Response({'detail': 'Nodo o parcela desconocidos'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # consultar plan activo de la parcela (si existe)
+        # seguridad adicional: si el payload incluye codigo_nodo_maestro debe coincidir con el token
+        payload_master_code = (payload or {}).get("codigo_nodo_maestro")
+        if payload_master_code:
+            if str(payload_master_code).strip() != str(node.codigo).strip():
+                return Response(
+                    {"detail": "codigo_nodo_maestro no coincide con el token proporcionado."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # seguridad adicional: validar que cada 'nodo_codigo' en 'lecturas' exista y pertenezca al maestro autenticado
+        lectura_nodes = [(l.get("nodo_codigo") or "").strip() for l in (payload or {}).get("lecturas", []) if l.get("nodo_codigo")]
+        invalid_codes = []
+        if lectura_nodes:
+            # buscar existentes que pertenezcan al maestro
+            existentes = set(
+                NodoSecundario.objects.filter(codigo__in=lectura_nodes, maestro=node).values_list("codigo", flat=True)
+            )
+            for code in lectura_nodes:
+                if code not in existentes:
+                    invalid_codes.append(code)
+            if invalid_codes:
+                return Response(
+                    {
+                        "detail": "Algunos nodos secundarios no pertenecen al nodo maestro autenticado o no existen.",
+                        "invalid_nodo_codigos": invalid_codes
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # consultar ParcelaPlan que cubra la fecha del timestamp (activo o programado)
         try:
             from plans.models import ParcelaPlan
         except Exception:
@@ -137,23 +171,32 @@ class NodeIngestView(views.APIView):
 
         parcela_plan = None
         if ParcelaPlan:
-            parcela_plan = ParcelaPlan.objects.select_related('plan').filter(parcela=parcela, estado='activo').first()
+            parcela_plan = (
+                ParcelaPlan.objects
+                .select_related('plan')
+                .filter(
+                    parcela=parcela,
+                    estado__in=['activo', 'programado'],
+                    fecha_inicio__lte=ts_local.date()
+                )
+                .filter(
+                    Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=ts_local.date())
+                )
+                .order_by('-fecha_inicio')
+                .first()
+            )
 
-        # si hay plan, validar ventanas y límites
+        # Si existe un plan vigente para la fecha, aplicamos validaciones (límite diario + ventanas)
         if parcela_plan and parcela_plan.plan:
             plan = parcela_plan.plan
-            # determinar límite diario
+            # determinar límite diario (veces_por_dia o limite_lecturas_dia)
             limite = getattr(plan, 'limite_lecturas_dia', None) or getattr(plan, 'veces_por_dia', None)
             try:
                 limite = int(limite) if limite is not None else None
             except Exception:
                 limite = None
 
-            # contar ingestiones del día para este maestro+parcela en Mongo
-            tz = timezone.get_current_timezone()
-            # ts_local: timestamp en la zona horaria actual
-            ts_local = ts.astimezone(tz) if getattr(ts, 'tzinfo', None) else timezone.make_aware(ts, tz)
-            # límites del día (00:00 y 24:00) en esa zona horaria
+            # límites del día (00:00 y 24:00) en la zona horaria del servidor
             start_naive = datetime.combine(ts_local.date(), time.min)
             end_naive = datetime.combine(ts_local.date() + timedelta(days=1), time.min)
             start_day = timezone.make_aware(start_naive, tz)
@@ -176,10 +219,21 @@ class NodeIngestView(views.APIView):
                     "current": current_count
                 }, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-            # validar que timestamp esté dentro de alguna ventana programada (si el plan define horarios)
+            # obtener horarios para la fecha: preferir plan.get_schedule_for_date, si no existe usar horarios_por_defecto
             schedule = []
             try:
-                schedule = plan.get_schedule_for_date(ts_local.date(), tz=tz)
+                if hasattr(plan, 'get_schedule_for_date'):
+                    schedule = plan.get_schedule_for_date(ts_local.date(), tz=tz) or []
+                else:
+                    # generar datetimes a partir de plan.horarios_por_defecto que se espera sea lista de "HH:MM"
+                    horarios = getattr(plan, 'horarios_por_defecto', []) or []
+                    for h in horarios:
+                        try:
+                            hh, mm = [int(x) for x in h.split(':')]
+                            dt_naive = datetime.combine(ts_local.date(), time(hh, mm))
+                            schedule.append(timezone.make_aware(dt_naive, tz))
+                        except Exception:
+                            continue
             except Exception:
                 schedule = []
 
@@ -188,7 +242,6 @@ class NodeIngestView(views.APIView):
                 post = timedelta(minutes=self.POST_MARGIN_MINUTES)
                 in_window = False
                 for scheduled_dt in schedule:
-                    # scheduled_dt ya es tz-aware por get_schedule_for_date
                     window_start = scheduled_dt - pre
                     window_end = scheduled_dt + post
                     if window_start <= ts_local <= window_end:
@@ -196,12 +249,15 @@ class NodeIngestView(views.APIView):
                         break
                 if not in_window:
                     return Response({
-                        "detail": "Timestamp fuera de ventanas programadas para hoy.",
-                        "timestamp": ts.isoformat(),
+                        "detail": "Timestamp fuera de ventanas programadas para hoy según el plan activo.",
+                        "timestamp": ts_local.isoformat(),
+                        "plan_id": plan.id,
+                        "plan_nombre": getattr(plan, 'nombre', None),
                         "windows": [
                             {"start": (sd - pre).isoformat(), "center": sd.isoformat(), "end": (sd + post).isoformat()}
                             for sd in schedule
-                        ]
+                        ],
+                        "nota": "Si deseas programar el siguiente plan, revisa las fechas de ParcelaPlan."
                     }, status=status.HTTP_400_BAD_REQUEST)
 
         # construir documento mongo (SIN 'bateria') y sin leer parcela_id del payload
