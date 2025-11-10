@@ -149,8 +149,13 @@ MONGO_DB = os.getenv('MONGO_DB', 'sensors_db')
 # Mantén compatibilidad si algún código usa MONGO_URL
 MONGO_URL = MONGO_URI or os.getenv('MONGO_URL', 'mongodb://localhost:27017')
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://59l9xs00-5173.brs.devtunnels.ms",
-]
+# CORS
+def _parse_origins(value: str):
+    return [o.strip().rstrip('/') for o in value.split(',') if o.strip()]
+
+CORS_ALLOWED_ORIGINS = _parse_origins(
+    os.getenv(
+        'CORS_ALLOWED_ORIGINS',
+        'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000'
+    )
+)
