@@ -12,7 +12,8 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 
 import os
 from pathlib import Path
-from dotenv import load_dotenv  # <-- Agrega esta línea
+from dotenv import load_dotenv
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -80,16 +81,24 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'agro_ai_platform.wsgi.application'
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql', 
-        'NAME': os.getenv('POSTGRES_DB', 'agro_ai_db'),
-        'USER': os.getenv('POSTGRES_USER', 'agro_ai_user'),
-        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'password'),
-        'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
-        'PORT': os.getenv('POSTGRES_PORT', '5432'),
+DB_URL = os.getenv('DATABASE_URL')
+if DB_URL:
+    # Render requiere SSL; si tu URL no tiene ?sslmode=require, manten ssl_require=True
+    DATABASES = {
+        'default': dj_database_url.parse(DB_URL, conn_max_age=600, ssl_require=True)
     }
-}
+else:
+    # Fallback local (opcional)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('POSTGRES_DB', 'agro_ai_db'),
+            'USER': os.getenv('POSTGRES_USER', 'agro_ai_user'),
+            'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'password'),
+            'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+            'PORT': os.getenv('POSTGRES_PORT', '5432'),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -135,8 +144,10 @@ SPECTACULAR_SETTINGS = {
 }
 
 # MongoDB (telemetría de sensores)
-MONGO_URL = os.getenv('MONGO_URL', 'mongodb://localhost:27017')
-MONGO_DB = os.getenv('MONGO_DB', 'agro_ai')
+MONGO_URI = os.getenv('MONGO_URI')  # nueva variable en .env
+MONGO_DB = os.getenv('MONGO_DB', 'sensors_db')
+# Mantén compatibilidad si algún código usa MONGO_URL
+MONGO_URL = MONGO_URI or os.getenv('MONGO_URL', 'mongodb://localhost:27017')
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",

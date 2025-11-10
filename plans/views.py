@@ -22,7 +22,7 @@ from .permissions import tiene_permiso  # adapter that reuses users.permissions
         "Permisos:\n"
         "- GET: requiere permiso 'planes.ver'.\n"
         "- POST: requiere permiso 'planes.crear'.\n\n"
-        "Campos Plan (ejemplo): nombre, descripcion, frecuencia_minutos, veces_por_dia, horarios_por_defecto, limite_lecturas_dia, precio"
+        "Campos Plan (ejemplo): nombre, descripcion, veces_por_dia, horarios_por_defecto, precio"
     ),
     parameters=[
         OpenApiParameter(name='ordering', description='Ordenar por campo (ej: precio)', required=False, type=OpenApiTypes.STR),
@@ -37,10 +37,8 @@ from .permissions import tiene_permiso  # adapter that reuses users.permissions
                 "id": 1,
                 "nombre": "Básico",
                 "descripcion": "Plan básico",
-                "frecuencia_minutos": None,
                 "veces_por_dia": 3,
                 "horarios_por_defecto": ["07:00","15:00","22:00"],
-                "limite_lecturas_dia": 8,
                 "precio": "9.99",
                 "created_at": "2025-10-20T00:00:00Z",
                 "updated_at": "2025-10-20T00:00:00Z"
@@ -54,7 +52,6 @@ from .permissions import tiene_permiso  # adapter that reuses users.permissions
                 "descripcion": "Plan pro",
                 "veces_por_dia": 6,
                 "horarios_por_defecto": ["06:00","12:00","18:00","00:00","04:00","20:00"],
-                "limite_lecturas_dia": 24,
                 "precio": "29.99"
             },
             request_only=True
@@ -100,10 +97,8 @@ class PlanListCreateView(generics.ListCreateAPIView):
                 "id": 1,
                 "nombre": "Básico",
                 "descripcion": "Plan básico",
-                "frecuencia_minutos": None,
                 "veces_por_dia": 3,
                 "horarios_por_defecto": ["07:00","15:00","22:00"],
-                "limite_lecturas_dia": 8,
                 "precio": "9.99",
                 "created_at": "2025-10-20T00:00:00Z",
                 "updated_at": "2025-10-20T00:00:00Z"
@@ -147,11 +142,13 @@ class PlanDetailView(generics.RetrieveUpdateDestroyAPIView):
     ],
     responses={200: ParcelaPlanSerializer(many=True)}
 )
-class ParcelaPlanListView(generics.ListAPIView):
+class ParcelaPlanListView(generics.ListCreateAPIView):
     serializer_class = ParcelaPlanSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('planes', 'ver')]
+        # GET -> ver, POST -> crear
+        op = 'ver' if self.request.method == 'GET' else 'crear'
+        return [permissions.IsAuthenticated(), HasOperationPermission('planes', op)]
 
     def get_queryset(self):
         user = self.request.user
@@ -171,37 +168,6 @@ class ParcelaPlanListView(generics.ListAPIView):
         if parcela.usuario == user:
             return ParcelaPlan.objects.filter(parcela=parcela).order_by('-fecha_inicio')
         raise PermissionDenied("No tienes permiso para ver las suscripciones de esta parcela.")
-
-@extend_schema(
-    tags=['Planes'],
-    summary='Crear suscripción (cambiar plan) para una parcela',
-    description=(
-        "Crea una nueva suscripción para la parcela indicada. Si existe una suscripción activa, "
-        "se marcará como 'vencido' y se establecerá fecha_fin = hoy.\n\n"
-        "Body esperado: { \"plan_id\": <int>, \"fecha_inicio\": \"YYYY-MM-DD\" (opcional) }\n\n"
-        "Si se envía `fecha_inicio` la suscripción se iniciará en esa fecha; si no se envía, "
-        "la suscripción comenzará hoy.\n\n"
-        "Permisos: requiere 'planes.crear' y ser propietario o admin."
-    ),
-    parameters=[
-        OpenApiParameter(name='parcela_id', description='ID de la parcela', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH)
-    ],
-    request=ParcelaPlanSerializer,
-    responses={201: ParcelaPlanSerializer, 400: OpenApiTypes.STR, 404: OpenApiTypes.STR},
-    examples=[
-        OpenApiExample(
-            'Crear suscripción ejemplo',
-            description='Body ejemplo para cambiar el plan de una parcela (con inicio inmediato o programado)',
-            value={"plan_id": 2, "fecha_inicio": "2025-11-01"},
-            request_only=True
-        )
-    ]
-)
-class ParcelaPlanCreateView(generics.CreateAPIView):
-    serializer_class = ParcelaPlanSerializer
-
-    def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('planes', 'crear')]
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -330,10 +296,8 @@ class ParcelaPlanDetailView(generics.RetrieveUpdateDestroyAPIView):
                 "id": 1,
                 "nombre": "Básico",
                 "descripcion": "Plan básico",
-                "frecuencia_minutos": None,
                 "veces_por_dia": 3,
                 "horarios_por_defecto": ["07:00","15:00","22:00"],
-                "limite_lecturas_dia": 8,
                 "precio": "9.99",
                 "created_at": "2025-10-20T00:00:00Z",
                 "updated_at": "2025-10-20T00:00:00Z"

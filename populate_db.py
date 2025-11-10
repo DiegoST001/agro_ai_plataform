@@ -426,33 +426,27 @@ else:
             if mname in modulos:
                 vincular(rname, mname, ops)
 
-    # 5) Planes base por horarios fijos
+    # 5) Planes base por horarios fijos (sin frecuencia_minutos ni limite_lecturas_dia)
     PLANES = [
         {
             'nombre': 'Básico',
             'descripcion': '3 lecturas/día',
-            'frecuencia_minutos': None,
             'veces_por_dia': 3,
             'horarios_por_defecto': ["07:00","15:00","22:00"],
-            'limite_lecturas_dia': 8,
             'precio': 0,
         },
         {
             'nombre': 'Estándar',
             'descripcion': '6 lecturas/día',
-            'frecuencia_minutos': None,
             'veces_por_dia': 6,
             'horarios_por_defecto': ["06:00","09:00","12:00","15:00","18:00","21:00"],
-            'limite_lecturas_dia': 8,
             'precio': 29.90,
         },
         {
             'nombre': 'Avanzado',
             'descripcion': '8 lecturas/día',
-            'frecuencia_minutos': None,
             'veces_por_dia': 8,
             'horarios_por_defecto': ["06:00","08:00","10:00","12:00","14:00","16:00","18:00","20:00"],
-            'limite_lecturas_dia': 8,
             'precio': 49.90,
         },
     ]
@@ -631,7 +625,7 @@ else:
                 ciclo.save(update_fields=['cultivo','variedad','etapa_actual','etapa_inicio','updated_at'])
                 print(f"[seed] Ciclo existente actualizado para parcela '{parcela_obj.nombre}' -> etapa '{etapa.nombre if etapa else 'N/A'}'.")
 
-    # 8) Recomendaciones demo
+    # 8) Recomendaciones demo (ajustar tipo al choice válido)
     Recommendation.objects.get_or_create(
         parcela=parcela1,
         titulo="Riego inicial",
@@ -640,7 +634,7 @@ else:
     Recommendation.objects.get_or_create(
         parcela=parcela2,
         titulo="Fertilización NPK",
-        defaults={"detalle": "Aplicar NPK 15-15-15 a razón de 150 kg/ha", "tipo": "nutricion"}
+        defaults={"detalle": "Aplicar NPK 15-15-15 a razón de 150 kg/ha", "tipo": "fertilizacion"}
     )
 
     # 10) Nodos maestros y secundarios demo

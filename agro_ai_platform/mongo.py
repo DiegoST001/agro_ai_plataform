@@ -7,10 +7,12 @@ _client: Optional[MongoClient] = None
 _db = None
 
 def _mongo_settings():
-    mongo_url = getattr(settings, "MONGO_URL", None) or os.getenv("MONGO_URL")
+    # Prioridad: settings.MONGO_URI > settings.MONGO_URL > env
+    mongo_url = getattr(settings, "MONGO_URI", None) or getattr(settings, "MONGO_URL", None) \
+        or os.getenv("MONGO_URI") or os.getenv("MONGO_URL")
     mongo_db = getattr(settings, "MONGO_DB", None) or os.getenv("MONGO_DB")
     if not mongo_url or not mongo_db:
-        raise RuntimeError("MONGO_URL y MONGO_DB deben estar definidos")
+        raise RuntimeError("MONGO_URI/MONGO_URL y MONGO_DB deben estar definidos")
     return mongo_url, mongo_db
 
 def get_client(serverSelectionTimeoutMS: int = 5000, **kwargs):

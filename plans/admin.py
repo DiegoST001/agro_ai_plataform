@@ -3,7 +3,7 @@ from .models import Plan, ParcelaPlan
 
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
-    list_display = ('id', 'nombre', 'precio', 'frecuencia_minutos', 'created_at')
+    list_display = ('id', 'nombre', 'veces_por_dia', 'precio')
     search_fields = ('nombre',)
 
 @admin.register(ParcelaPlan)

@@ -26,57 +26,67 @@ def readings_collection(name):
     tags=['Ingesta'],
     summary='Ingesta de datos desde nodo maestro',
     description=(
-        "Recibe datos de sensores enviados por el nodo maestro y los almacena en MongoDB (solo lecturas y sensores). "
-        "Autenticación: token de nodo (NodeTokenAuthentication) — request.node y request.auth deben estar presentes.\n\n"
-        "Comportamiento y validaciones:\n"
-        "- El endpoint valida el plan activo de la parcela asociada al nodo (ParcelaPlan -> Plan).\n"
-        "- Si existe un plan activo se aplican:\n"
-        "  * Límite máximo de ingestiones por día (plan.limite_lecturas_dia o veces_por_dia).\n"
-        "  * Validación de ventanas horarias programadas (plan.get_schedule_for_date) con ventana "
-        f"(−{PRE_MARGIN_DEFAULT}min, +{POST_MARGIN_DEFAULT}min) por horario.\n"
-        "- Si la ingestión excede el límite diario o está fuera de todas las ventanas válidas, retorna 429 o 400.\n\n"
-        "Importante:\n"
-        "- NO envíes 'parcela_id'; se infiere del nodo autenticado. "
-        "Opcionalmente puedes enviar 'codigo_nodo_maestro', pero se usará el del token.\n\n"
-        "Datos almacenados en MongoDB:\n"
-        "- Documento: seed_tag, parcela_id (derivado), codigo_nodo_maestro (derivado), timestamp y lecturas[].\n"
-        "- Cada lectura: nodo_codigo, last_seen, sensores[]. NO se guarda 'bateria' en MongoDB.\n"
+        "Recibe datos de sensores enviados por el nodo maestro y los almacena en MongoDB.\n\n"
+        "Validaciones principales:\n"
+        "- Requiere token de nodo (Node <KEY> / X-Node-Token).\n"
+        "- Cada nodo secundario debe pertenecer al maestro autenticado.\n"
+        "- Se busca el ParcelaPlan más reciente con estado 'activo' o 'programado' y fecha_inicio <= fecha del timestamp.\n"
+        "- Si no hay plan válido: se rechaza con reason=no_plan_activo.\n"
+        "- Límite diario = veces_por_dia del plan.\n"
+        "- Ventanas: horarios_por_defecto (o generación interna). Cada horario acepta una lectura dentro de ±5 minutos.\n"
+        "- Errores diferenciados por 'reason'."
     ),
-    request={
-        "type": "object",
-        "properties": {
-            "codigo_nodo_maestro": {"type": "string", "example": "NODE-001", "description": "Opcional; se usa el del token si no se envía."},
-            "timestamp": {"type": "string", "format": "date-time", "example": "2025-09-24T18:30:00Z"},
-            "last_seen": {"type": "string", "format": "date-time", "example": "2025-10-01T07:59:50Z"},
-            "estado": {"type": "string", "example": "activo"},
-            "lat": {"type": "string", "example": "-13.53"},
-            "lng": {"type": "string", "example": "-70.65"},
-            "senal": {"type": "string", "example": "-70dBm"},
-            "lecturas": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "nodo_codigo": {"type": "string", "example": "NODE-01"},
-                        "bateria": {"type": "integer", "example": 95, "description": "Aceptada en payload pero NO persistida en MongoDB; se guarda en Postgres."},
-                        "last_seen": {"type": "string", "format": "date-time", "example": "2025-10-01T07:59:50Z"},
-                        "sensores": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "sensor": {"type": "string", "example": "temperatura"},
-                                    "valor": {"type": "number", "example": 22.5},
-                                    "unidad": {"type": "string", "example": "°C"}
+    request={   # <- cambiar a "application/json" para que Swagger muestre el example
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "codigo_nodo_maestro": {"type": "string", "example": "NODE-001", "description": "Opcional; se usa el del token si no se envía."},
+                "timestamp": {"type": "string", "format": "date-time", "example": "2025-09-24T18:30:00Z"},
+                "last_seen": {"type": "string", "format": "date-time", "example": "2025-10-01T07:59:50Z"},
+                "estado": {"type": "string", "example": "activo"},
+                "lat": {"type": "string", "example": "-13.53"},
+                "lng": {"type": "string", "example": "-70.65"},
+                "senal": {"type": "string", "example": "-70dBm"},
+                "lecturas": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "nodo_codigo": {"type": "string", "example": "NODE-01-S1"},
+                            "bateria": {"type": "integer", "example": 95, "description": "Aceptada en payload pero NO persistida en MongoDB; se guarda en Postgres."},
+                            "last_seen": {"type": "string", "format": "date-time", "example": "2025-10-01T07:59:50Z"},
+                            "sensores": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "sensor": {"type": "string", "example": "temperatura"},
+                                        "valor": {"type": "number", "example": 22.5},
+                                        "unidad": {"type": "string", "example": "°C"}
+                                    }
                                 }
                             }
-                        }
-                    },
-                    "required": ["nodo_codigo", "sensores"]
+                        },
+                        "required": ["nodo_codigo", "sensores"]
+                    }
                 }
+            },
+            "required": ["timestamp", "lecturas"],
+            "example": {
+                "codigo_nodo_maestro": "NODE-001",
+                "timestamp": "2025-10-01T08:00:00Z",
+                "lecturas": [
+                    {
+                        "nodo_codigo": "NODE-01-S1",
+                        "last_seen": "2025-10-01T07:59:50Z",
+                        "sensores": [
+                            { "sensor": "temperatura", "valor": 22.5, "unidad": "°C" },
+                            { "sensor": "humedad", "valor": 65.2, "unidad": "%" }
+                        ]
+                    }
+                ]
             }
-        },
-        "required": ["timestamp", "lecturas"]
+        }
     },
     examples=[
         OpenApiExample(
@@ -86,7 +96,7 @@ def readings_collection(name):
                 "timestamp": "2025-10-01T08:00:00Z",
                 "lecturas": [
                     {
-                        "nodo_codigo": "NODE-01",
+                        "nodo_codigo": "NODE-01-S1",
                         "last_seen": "2025-10-01T07:59:50Z",
                         "sensores": [
                             { "sensor": "temperatura", "valor": 22.5, "unidad": "°C" },
@@ -108,14 +118,12 @@ class NodeIngestView(views.APIView):
     POST_MARGIN_MINUTES = POST_MARGIN_DEFAULT
 
     def post(self, request):
-        # 0) autenticación por token de nodo (NodeTokenAuthentication debe setear request.node y request.auth)
         token = getattr(request, "auth", None)
         nodo_auth = getattr(request, "node", None)
         if not token or not nodo_auth:
-            return Response({'detail': 'No autorizado'}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({'detail': 'No autorizado', 'reason': 'auth_required'}, status=status.HTTP_401_UNAUTHORIZED)
 
         payload = request.data or {}
-        # normalizar timestamp (acepta ISO string o None)
         ts = payload.get("timestamp")
         if isinstance(ts, str):
             try:
@@ -123,230 +131,204 @@ class NodeIngestView(views.APIView):
             except Exception:
                 ts = None
         ts = ts or timezone.now()
-
-        # NORMALIZAR zona y ts_local aquí para usar en la búsqueda de planes
         tz = timezone.get_current_timezone()
         ts_local = ts.astimezone(tz) if getattr(ts, 'tzinfo', None) else timezone.make_aware(ts, tz)
 
-        # el nodo viene del token; opcionalmente cae el código en payload
         node = nodo_auth
         parcela = getattr(node, "parcela", None)
         if not node or not parcela:
-            return Response({'detail': 'Nodo o parcela desconocidos'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Nodo o parcela desconocidos', 'reason': 'nodo_parcela_missing'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # seguridad adicional: si el payload incluye codigo_nodo_maestro debe coincidir con el token
         payload_master_code = (payload or {}).get("codigo_nodo_maestro")
-        if payload_master_code:
-            if str(payload_master_code).strip() != str(node.codigo).strip():
-                return Response(
-                    {"detail": "codigo_nodo_maestro no coincide con el token proporcionado."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        if payload_master_code and str(payload_master_code).strip() != str(node.codigo).strip():
+            return Response(
+                {"detail": "codigo_nodo_maestro no coincide con el token proporcionado.", 'reason': 'codigo_maestro_mismatch'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
-        # seguridad adicional: validar que cada 'nodo_codigo' en 'lecturas' exista y pertenezca al maestro autenticado
         lectura_nodes = [(l.get("nodo_codigo") or "").strip() for l in (payload or {}).get("lecturas", []) if l.get("nodo_codigo")]
-        invalid_codes = []
         if lectura_nodes:
-            # buscar existentes que pertenezcan al maestro
             existentes = set(
                 NodoSecundario.objects.filter(codigo__in=lectura_nodes, maestro=node).values_list("codigo", flat=True)
             )
-            for code in lectura_nodes:
-                if code not in existentes:
-                    invalid_codes.append(code)
-            if invalid_codes:
+            invalid = [c for c in lectura_nodes if c not in existentes]
+            if invalid:
                 return Response(
-                    {
-                        "detail": "Algunos nodos secundarios no pertenecen al nodo maestro autenticado o no existen.",
-                        "invalid_nodo_codigos": invalid_codes
-                    },
+                    {"detail": "Nodos secundarios inválidos o no pertenecen al maestro.", "invalid_nodo_codigos": invalid, 'reason': 'nodos_secundarios_invalidos'},
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-        # consultar ParcelaPlan que cubra la fecha del timestamp (activo o programado)
-        try:
-            from plans.models import ParcelaPlan
-        except Exception:
-            ParcelaPlan = None
+        # Buscar plan aplicable (activo o programado) cuyo inicio <= fecha
+        from plans.models import ParcelaPlan
+        parcela_plan = (
+            ParcelaPlan.objects
+            .select_related('plan')
+            .filter(
+                parcela=parcela,
+                estado__in=['activo', 'programado'],
+                fecha_inicio__lte=ts_local.date()
+            )
+            .filter(
+                Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=ts_local.date())
+            )
+            .order_by('-fecha_inicio')
+            .first()
+        )
 
-        parcela_plan = None
-        if ParcelaPlan:
-            parcela_plan = (
-                ParcelaPlan.objects
-                .select_related('plan')
-                .filter(
-                    parcela=parcela,
-                    estado__in=['activo', 'programado'],
-                    fecha_inicio__lte=ts_local.date()
-                )
-                .filter(
-                    Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=ts_local.date())
-                )
-                .order_by('-fecha_inicio')
-                .first()
+        if not parcela_plan or not getattr(parcela_plan, 'plan', None):
+            return Response(
+                {"detail": "No hay suscripción/plan vigente para esta fecha.", 'reason': 'no_plan_activo'},
+                status=status.HTTP_403_FORBIDDEN
             )
 
-        # Si existe un plan vigente para la fecha, aplicamos validaciones (límite diario + ventanas)
-        if parcela_plan and parcela_plan.plan:
-            plan = parcela_plan.plan
-            # determinar límite diario (veces_por_dia o limite_lecturas_dia)
-            limite = getattr(plan, 'limite_lecturas_dia', None) or getattr(plan, 'veces_por_dia', None)
-            try:
-                limite = int(limite) if limite is not None else None
-            except Exception:
-                limite = None
+        plan = parcela_plan.plan
 
-            # límites del día (00:00 y 24:00) en la zona horaria del servidor
-            start_naive = datetime.combine(ts_local.date(), time.min)
-            end_naive = datetime.combine(ts_local.date() + timedelta(days=1), time.min)
-            start_day = timezone.make_aware(start_naive, tz)
-            end_day = timezone.make_aware(end_naive, tz)
+        # límite diario = veces_por_dia
+        try:
+            limite = int(getattr(plan, 'veces_por_dia', 0)) if plan.veces_por_dia else None
+        except Exception:
+            limite = None
 
-            mongo_q = {
-                "codigo_nodo_maestro": node.codigo,
-                "parcela_id": parcela.id,
-                "timestamp": {"$gte": start_day, "$lt": end_day}
-            }
-            try:
-                current_count = readings_collection("lecturas_sensores").count_documents(mongo_q)
-            except Exception:
-                current_count = 0
+        start_day = timezone.make_aware(datetime.combine(ts_local.date(), time.min), tz)
+        end_day = timezone.make_aware(datetime.combine(ts_local.date() + timedelta(days=1), time.min), tz)
+        mongo_q = {
+            "codigo_nodo_maestro": node.codigo,
+            "parcela_id": parcela.id,
+            "timestamp": {"$gte": start_day, "$lt": end_day}
+        }
+        try:
+            current_count = readings_collection("lecturas_sensores").count_documents(mongo_q)
+        except Exception:
+            current_count = 0
 
-            if limite is not None and current_count >= limite:
-                return Response({
-                    "detail": "Límite de lecturas por día alcanzado para este nodo/parcela según el plan.",
-                    "limit": limite,
-                    "current": current_count
-                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        if limite is not None and current_count >= limite:
+            return Response({
+                "detail": "Límite diario alcanzado según el plan.",
+                "limit": limite,
+                "current": current_count,
+                "reason": "limite_diario"
+            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-            # obtener horarios para la fecha: preferir plan.get_schedule_for_date, si no existe usar horarios_por_defecto
+        # Horarios para hoy
+        try:
+            schedule = plan.get_schedule_for_date(ts_local.date(), tz=tz) or []
+        except Exception:
             schedule = []
-            try:
-                if hasattr(plan, 'get_schedule_for_date'):
-                    schedule = plan.get_schedule_for_date(ts_local.date(), tz=tz) or []
-                else:
-                    # generar datetimes a partir de plan.horarios_por_defecto que se espera sea lista de "HH:MM"
-                    horarios = getattr(plan, 'horarios_por_defecto', []) or []
-                    for h in horarios:
-                        try:
-                            hh, mm = [int(x) for x in h.split(':')]
-                            dt_naive = datetime.combine(ts_local.date(), time(hh, mm))
-                            schedule.append(timezone.make_aware(dt_naive, tz))
-                        except Exception:
-                            continue
-            except Exception:
-                schedule = []
 
-            if schedule:
-                pre = timedelta(minutes=self.PRE_MARGIN_MINUTES)
-                post = timedelta(minutes=self.POST_MARGIN_MINUTES)
-                in_window = False
-                for scheduled_dt in schedule:
-                    window_start = scheduled_dt - pre
-                    window_end = scheduled_dt + post
-                    if window_start <= ts_local <= window_end:
-                        in_window = True
-                        break
-                if not in_window:
-                    return Response({
-                        "detail": "Timestamp fuera de ventanas programadas para hoy según el plan activo.",
-                        "timestamp": ts_local.isoformat(),
-                        "plan_id": plan.id,
-                        "plan_nombre": getattr(plan, 'nombre', None),
-                        "windows": [
-                            {"start": (sd - pre).isoformat(), "center": sd.isoformat(), "end": (sd + post).isoformat()}
-                            for sd in schedule
-                        ],
-                        "nota": "Si deseas programar el siguiente plan, revisa las fechas de ParcelaPlan."
-                    }, status=status.HTTP_400_BAD_REQUEST)
+        if not schedule:
+            return Response({
+                "detail": "El plan no define horarios para hoy.",
+                "reason": "plan_sin_horarios"
+            }, status=status.HTTP_403_FORBIDDEN)
 
-        # construir documento mongo (SIN 'bateria') y sin leer parcela_id del payload
+        pre = timedelta(minutes=5)
+        post = timedelta(minutes=5)
+        matched_slot = None
+        for scheduled_dt in schedule:
+            if (scheduled_dt - pre) <= ts_local <= (scheduled_dt + post):
+                matched_slot = scheduled_dt
+                break
+
+        if not matched_slot:
+            return Response({
+                "detail": "Timestamp fuera de ventanas programadas (±5 min).",
+                "timestamp": ts_local.isoformat(),
+                "plan_id": plan.id,
+                "horarios": [h.isoformat() for h in schedule],
+                "reason": "fuera_de_ventana"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Evitar duplicado en slot
+        window_start = matched_slot - pre
+        window_end = matched_slot + post
+        mongo_q_slot = {
+            "codigo_nodo_maestro": node.codigo,
+            "parcela_id": parcela.id,
+            "timestamp": {"$gte": window_start, "$lt": window_end}
+        }
+        try:
+            slot_count = readings_collection("lecturas_sensores").count_documents(mongo_q_slot)
+        except Exception:
+            slot_count = 0
+        if slot_count >= 1:
+            return Response({
+                "detail": "Ya existe una lectura en esta ventana.",
+                "slot_center": matched_slot.isoformat(),
+                "reason": "slot_ocupado"
+            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         mongo_doc = {
-            "seed_tag": (request.data or {}).get("seed_tag", "demo"),
-            "parcela_id": parcela.id,                 # derivado del nodo
-            "codigo_nodo_maestro": node.codigo,       # derivado del nodo
-            "timestamp": ts,
+            "seed_tag": (payload or {}).get("seed_tag", "demo"),
+            "parcela_id": parcela.id,
+            "codigo_nodo_maestro": node.codigo,
+            "timestamp": ts_local,
             "lecturas": []
         }
         present_codes = set()
-        for lectura in (request.data or {}).get("lecturas", []):
+        for lectura in (payload or {}).get("lecturas", []):
             codigo = lectura.get("nodo_codigo")
-            lectura_doc = {
+            mongo_doc["lecturas"].append({
                 "nodo_codigo": codigo,
                 "last_seen": lectura.get("last_seen"),
                 "sensores": lectura.get("sensores", []),
-            }
-            mongo_doc["lecturas"].append(lectura_doc)
+            })
             if codigo:
                 present_codes.add(codigo)
 
         readings_collection("lecturas_sensores").insert_one(mongo_doc)
-        # actualizar maestro en Postgres (se mantiene la lógica anterior)
+
         now = timezone.now()
         node.last_seen = now
         node.estado = payload.get("estado", "activo")
         update_fields = ["last_seen", "estado"]
-
-        if "bateria" in payload and payload.get("bateria") is not None:
-            try:
-                node.bateria = int(payload.get("bateria"))
-                update_fields.append("bateria")
-            except (ValueError, TypeError):
-                pass
-
-        if "senal" in payload and payload.get("senal") is not None:
-            try:
-                node.senal = int(payload.get("senal"))
-                update_fields.append("senal")
-            except (ValueError, TypeError):
-                pass
-
-        if "lat" in payload and payload.get("lat") is not None:
-            node.lat = payload.get("lat")
-            update_fields.append("lat")
-        if "lng" in payload and payload.get("lng") is not None:
-            node.lng = payload.get("lng")
-            update_fields.append("lng")
-
+        for attr in ["bateria", "senal", "lat", "lng"]:
+            if attr in payload and payload.get(attr) is not None:
+                try:
+                    node.__setattr__(attr, payload.get(attr))
+                    update_fields.append(attr)
+                except Exception:
+                    pass
         node.save(update_fields=list(dict.fromkeys(update_fields)))
 
-        # actualizar nodos secundarios presentes y marcar como inactivos los ausentes
         for lectura in payload.get("lecturas", []):
             codigo_sec = lectura.get("nodo_codigo")
             if not codigo_sec:
                 continue
             try:
-                nodo_sec = NodoSecundario.objects.get(codigo=codigo_sec)
-                changed_fields = []
-                if lectura.get("last_seen") is not None:
+                nodo_sec = NodoSecundario.objects.get(codigo=codigo_sec, maestro=node)
+                changed = []
+                ls = lectura.get("last_seen")
+                parsed_ls = None
+                if isinstance(ls, str):
                     try:
-                        nodo_sec.last_seen = lectura.get("last_seen")
-                        changed_fields.append("last_seen")
+                        parsed_ls = datetime.fromisoformat(ls.replace("Z", "+00:00"))
+                        if getattr(parsed_ls, 'tzinfo', None) is None:
+                            parsed_ls = timezone.make_aware(parsed_ls, tz)
                     except Exception:
-                        pass
+                        parsed_ls = None
+                nodo_sec.last_seen = parsed_ls or now
+                changed.append("last_seen")
                 estado_val = lectura.get("estado", "activo")
-                if estado_val is not None:
+                if estado_val:
                     nodo_sec.estado = estado_val
-                    changed_fields.append("estado")
-                # batería (acepta 0) -> se guarda en Postgres
+                    changed.append("estado")
                 if "bateria" in lectura and lectura.get("bateria") is not None:
                     try:
                         nodo_sec.bateria = int(lectura.get("bateria"))
-                        changed_fields.append("bateria")
-                    except (ValueError, TypeError):
+                        changed.append("bateria")
+                    except Exception:
                         pass
-                if changed_fields:
-                    nodo_sec.save(update_fields=list(dict.fromkeys(changed_fields)))
+                if changed:
+                    nodo_sec.save(update_fields=list(dict.fromkeys(changed)))
             except NodoSecundario.DoesNotExist:
                 continue
 
-        if node is not None:
-            qs_absent = NodoSecundario.objects.filter(maestro=node)
-            if present_codes:
-                qs_absent = qs_absent.exclude(codigo__in=list(present_codes))
-            qs_absent.update(estado="inactivo")
+        qs_absent = NodoSecundario.objects.filter(maestro=node)
+        if present_codes:
+            qs_absent = qs_absent.exclude(codigo__in=list(present_codes))
+        qs_absent.update(estado="inactivo")
 
-        return Response({"detail": "OK"}, status=status.HTTP_200_OK)
+        return Response({"detail": "OK", "reason": "ingesta_aceptada"}, status=status.HTTP_200_OK)
 
 @extend_schema(
     tags=['Nodos'],

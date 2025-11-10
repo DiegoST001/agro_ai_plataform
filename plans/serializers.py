@@ -5,8 +5,8 @@ class PlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plan
         fields = [
-            'id', 'nombre', 'descripcion', 'frecuencia_minutos',
-            'veces_por_dia', 'horarios_por_defecto', 'limite_lecturas_dia',
+            'id', 'nombre', 'descripcion',
+            'veces_por_dia', 'horarios_por_defecto',
             'precio', 'created_at', 'updated_at'
         ]
         read_only_fields = ('id', 'created_at', 'updated_at')
