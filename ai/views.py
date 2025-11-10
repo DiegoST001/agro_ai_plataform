@@ -1,10 +1,13 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status, permissions, viewsets
+from rest_framework import status
+from drf_spectacular.utils import extend_schema
+from .serializers import ChatRequestSerializer
 from .services import chat_with_ai, get_context
 from .models import AIIntegration
 from .serializers import AIIntegrationSerializer
 from drf_spectacular.utils import extend_schema, OpenApiExample, extend_schema_view
+from rest_framework import viewsets, permissions
 
 def detectar_tipo_consulta(prompt):
     texto = prompt.lower()
@@ -29,14 +32,7 @@ def detectar_tipo_consulta(prompt):
     tags=['IA'],
     summary='Chat con IA',
     description='Permite enviar un mensaje (prompt) a la IA y obtener una respuesta contextualizada según el usuario y la parcela.',
-    request={
-        "type": "object",
-        "properties": {
-            "prompt": {"type": "string", "example": "¿Cuál es el estado de mi parcela hoy?"},
-            "parcela_id": {"type": "integer", "example": 1}
-        },
-        "required": ["prompt"]
-    },
+    request=ChatRequestSerializer,
     responses={
         200: OpenApiExample(
             'Respuesta exitosa',
@@ -49,14 +45,15 @@ def detectar_tipo_consulta(prompt):
     }
 )
 class AIChatView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ChatRequestSerializer
 
     def post(self, request):
-        prompt = request.data.get("prompt")
-        parcela_id = request.data.get("parcela_id")
-        usuario_id = request.user.id  # Usar el usuario autenticado
-        if not prompt:
-            return Response({"detail": "prompt requerido"}, status=status.HTTP_400_BAD_REQUEST)
+        s = self.serializer_class(data=request.data)
+        s.is_valid(raise_exception=True)
+        prompt = s.validated_data["prompt"]
+        parcela_id = s.validated_data.get("parcela_id")
+        usuario_id = getattr(request.user, "id", None)
+
         consulta = detectar_tipo_consulta(prompt)
         contexto = get_context(usuario_id, parcela_id, consulta)
         respuesta = chat_with_ai(prompt, contexto)

@@ -4,6 +4,8 @@ from typing import Any, Optional, Dict
 
 from .models import Parcela, Ciclo
 from crops.models import Cultivo, Variedad, Etapa
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 
 User = get_user_model()
 
@@ -48,6 +50,7 @@ class CicloReadSerializer(serializers.ModelSerializer):
             return None
         return {'id': obj.id, 'nombre': getattr(obj, 'nombre', str(obj))}
 
+    @extend_schema_field(OpenApiTypes.STR)
     def get_cultivo(self, obj):
         return self._to_basic(obj.cultivo)
 

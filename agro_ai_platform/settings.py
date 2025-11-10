@@ -18,11 +18,25 @@ import dj_database_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Carga las variables del archivo .env
-load_dotenv(os.path.join(BASE_DIR, '.env'))  # <-- Agrega esta línea
+load_dotenv()
+
+def _csv(key, default=""):
+    raw = os.getenv(key, default)
+    return [x.strip() for x in raw.split(",") if x.strip()]
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key')
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+ALLOWED_HOSTS = _csv("ALLOWED_HOSTS", "localhost,127.0.0.1")
+
+# Acepta tanto dominios completos como URLs con esquema
+_csrf = _csv("CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = [
+    v if "://" in v else f"https://{v}"
+    for v in _csv("CSRF_TRUSTED_ORIGINS", "")
+] if _csrf else []
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
 
 INSTALLED_APPS = [
     'corsheaders',
@@ -52,7 +66,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.security.SecurityMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -110,10 +125,11 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
-USE_L10N = True
+# USE_L10N = True  # eliminar en Django 5
 USE_TZ = True
 
 STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'authentication.User'
 
@@ -159,3 +175,13 @@ CORS_ALLOWED_ORIGINS = _parse_origins(
         'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000'
     )
 )
+
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+if not DEBUG:
+    SECURE_HSTS_SECONDS = 60
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True

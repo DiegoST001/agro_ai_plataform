@@ -6,10 +6,10 @@ from .models import Cultivo, Variedad, Etapa, ReglaPorEtapa
 User = get_user_model()
 
 
-class MinimalUserSerializer(serializers.ModelSerializer):
+class CropsMinimalUserSerializer(serializers.ModelSerializer):
     class Meta:
-        model = User
-        fields = ('id', 'username', 'email')
+        model = get_user_model()
+        fields = ("id", "username")
 
 
 class CultivoSimpleSerializer(serializers.ModelSerializer):
@@ -91,7 +91,7 @@ class VariedadSerializer(serializers.ModelSerializer):
 
 class ReglaPorEtapaSerializer(serializers.ModelSerializer):
     etapa = serializers.PrimaryKeyRelatedField(queryset=Etapa.objects.all())
-    created_by = MinimalUserSerializer(read_only=True)
+    created_by = CropsMinimalUserSerializer(read_only=True)
 
     class Meta:
         model = ReglaPorEtapa

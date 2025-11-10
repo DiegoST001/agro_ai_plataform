@@ -12,6 +12,8 @@ from .serializers import NodeSerializer, NodoSecundarioSerializer
 from .permissions import tiene_permiso, role_name, HasOperationPermission
 from .permissions import OwnsNodeOrAdmin  # <- nuevo
 from django.db.models import Q
+from rest_framework.generics import GenericAPIView
+from rest_framework import serializers
 
 # márgenes por defecto (usados en Swagger y en la vista)
 PRE_MARGIN_DEFAULT = 10
@@ -21,6 +23,10 @@ def readings_collection(name):
     # usa get_db() de forma lazy para evitar import-time issues
     db = get_db()
     return db[name]
+
+class NodeIngestSerializer(serializers.Serializer):
+    nodo_id = serializers.IntegerField()
+    payload = serializers.JSONField()
 
 @extend_schema(
     tags=['Ingesta'],
@@ -109,15 +115,18 @@ def readings_collection(name):
         )
     ]
 )
-class NodeIngestView(views.APIView):
+class NodeIngestView(GenericAPIView):
     authentication_classes = [NodeTokenAuthentication]
-    permission_classes = [permissions.AllowAny]
+    permission_classes = []
+    serializer_class = NodeIngestSerializer
 
     # márgenes por defecto para ventana de schedule (antes / después)
     PRE_MARGIN_MINUTES = PRE_MARGIN_DEFAULT
     POST_MARGIN_MINUTES = POST_MARGIN_DEFAULT
 
     def post(self, request):
+        s = self.serializer_class(data=request.data)
+        s.is_valid(raise_exception=True)
         token = getattr(request, "auth", None)
         nodo_auth = getattr(request, "node", None)
         if not token or not nodo_auth:
