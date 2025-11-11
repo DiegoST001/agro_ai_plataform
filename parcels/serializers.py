@@ -65,6 +65,7 @@ class CicloReadSerializer(serializers.ModelSerializer):
 # Parcela serializers
 # -----------------------
 class ParcelaCreateSerializer(serializers.ModelSerializer):
+    usuario = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
     ciclo = CicloCreateSerializer(required=False, write_only=True)
 
     class Meta:

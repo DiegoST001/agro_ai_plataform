@@ -6,7 +6,7 @@ app_name = 'parcels'  # <-- añadido para namespacing
 urlpatterns = [
     # Parcelas
     path('parcelas/', views.ParcelaListCreateView.as_view(), name='parcelas-list-create'),
-    path('parcelas/crear_mia/', views.ParcelaCreateOwnView.as_view(), name='parcelas-create-own'),
+    # path('parcelas/crear_mia/', views.ParcelaCreateOwnView.as_view(), name='parcelas-create-own'),
     path('parcelas/<int:pk>/', views.ParcelaDetailView.as_view(), name='parcelas-detail'),
 
     # Ciclos (por parcela)

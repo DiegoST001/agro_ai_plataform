@@ -373,10 +373,22 @@ class ParcelaListCreateView(generics.ListCreateAPIView):
         return qs.filter(usuario=user)
 
     def perform_create(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
         user = self.request.user
-        if role_name(user) in ['superadmin', 'administrador'] and serializer.validated_data.get('usuario'):
-            serializer.save()
+        provided_user = serializer.validated_data.get('usuario', None)
+
+        r = role_name(user)
+        if provided_user:
+            # admins/superadmin pueden crear para cualquier usuario
+            if r in ['superadmin', 'administrador']:
+                serializer.save()
+                return
+            # si no es admin solo puede crear para sí mismo
+            if getattr(provided_user, 'id', None) != user.id:
+                raise PermissionDenied("No tiene permiso para crear una parcela para otro usuario.")
+            serializer.save(usuario=user)
         else:
+            # si no se proporciona 'usuario', asignar el request.user
             serializer.save(usuario=user)
 
 
