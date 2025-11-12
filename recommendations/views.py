@@ -46,13 +46,14 @@ class RecommendationByParcelaListView(generics.ListAPIView):
         parcela = self.get_parcela_or_404(parcela_id)
         if not tiene_permiso(user, 'alertas', 'ver'):
             raise PermissionDenied("No tienes permiso para ver alertas.")
+        if getattr(parcela, 'usuario', None) != user:
+            # Siempre restringido al dueño, sin excepciones por rol
+            raise PermissionDenied("No tienes acceso a esta parcela.")
         qs = Recommendation.objects.select_related('parcela').filter(parcela=parcela).order_by('-created_at')
         tipo = self.request.query_params.get('tipo')
         if tipo:
             qs = qs.filter(tipo=tipo)
-        if role_name(user) in ['superadmin', 'administrador', 'tecnico']:
-            return qs
-        return qs.filter(parcela__usuario=user)
+        return qs
 
 @extend_schema(
     tags=['Alertas'],
@@ -80,10 +81,7 @@ class RecommendationUserListView(generics.ListAPIView):
         user = self.request.user
         if not tiene_permiso(user, 'alertas', 'ver'):
             raise PermissionDenied("No tienes permiso para ver alertas.")
-        qs = Recommendation.objects.select_related('parcela').all().order_by('-created_at')
-        if role_name(user) not in ['superadmin', 'administrador', 'tecnico']:
-            qs = qs.filter(parcela__usuario=user)
-        # Filtros opcionales
+        qs = Recommendation.objects.select_related('parcela').filter(parcela__usuario=user).order_by('-created_at')
         tipo = self.request.query_params.get('tipo')
         if tipo:
             qs = qs.filter(tipo=tipo)
