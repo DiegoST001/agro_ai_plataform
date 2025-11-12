@@ -13,3 +13,10 @@ psycopg[binary]==3.2.12
 requests==2.32.3
 whitenoise==6.7.0
 tzdata==2025.1; platform_system == "Windows"
+
+# Añadir:
+celery>=5.2.7,<6.0
+asgiref>=3.5.2,<4
+# opcional (si usas estas apps):
+django-celery-beat==2.6.0
+django-celery-results==2.5.1

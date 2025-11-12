@@ -1,8 +1,7 @@
 from datetime import datetime
-from rest_framework import generics, permissions, status
-from rest_framework.response import Response
-from rest_framework.exceptions import PermissionDenied, NotFound, ValidationError
-from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter, OpenApiTypes
+from rest_framework import generics, permissions
+from rest_framework.exceptions import PermissionDenied, NotFound
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from users.permissions import HasOperationPermission, role_name
 from .permissions import tiene_permiso, OwnsObjectOrAdmin
 from .models import Recommendation
@@ -10,60 +9,30 @@ from .serializers import RecommendationSerializer
 from parcels.models import Parcela
 
 @extend_schema(
-    tags=['Recomendaciones'],
-    summary='Listar recomendaciones (global)',
+    tags=['Alertas'],
+    summary='Listar alertas por parcela',
     description=(
-        "Lista todas las recomendaciones.\n\n"
+        "Lista las alertas asociadas a la parcela indicada.\n\n"
+        "- Solo GET está permitido en este endpoint (no crear desde API pública).\n"
         "- Admin/Superadmin/Técnico: ven todas.\n"
-        "- Agricultor: solo recomendaciones de sus parcelas.\n"
-        "Requiere permiso 'recomendaciones.ver'."
+        "- Agricultor: solo alertas de sus parcelas.\n"
+        "Requiere permiso 'alertas.ver'."
     ),
     parameters=[
         OpenApiParameter(name='tipo', description='Filtrar por tipo', required=False, type=OpenApiTypes.STR),
+        OpenApiParameter(name='parcela_id', description='ID de la parcela (path)', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH),
     ],
     responses={200: RecommendationSerializer(many=True)}
 )
-class RecommendationListView(generics.ListAPIView):
+class RecommendationByParcelaListView(generics.ListAPIView):
+    """
+    Endpoint sólo para listar alertas/recomendaciones asociadas a una parcela.
+    No permite creación vía API pública.
+    """
     serializer_class = RecommendationSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('recomendaciones', 'ver')]
-
-    def get_queryset(self):
-        user = self.request.user
-        if not tiene_permiso(user, 'recomendaciones', 'ver'):
-            raise PermissionDenied("No tienes permiso para ver recomendaciones.")
-        qs = Recommendation.objects.select_related('parcela').all().order_by('-created_at')
-        tipo = self.request.query_params.get('tipo')
-        if tipo:
-            qs = qs.filter(tipo=tipo)
-        if role_name(user) in ['superadmin', 'administrador', 'tecnico']:
-            return qs
-        # agricultor -> sólo sus parcelas
-        return qs.filter(parcela__usuario=user)
-
-@extend_schema(
-    tags=['Recomendaciones'],
-    summary='Listar / crear recomendaciones para una parcela',
-    description=(
-        "Listar o crear recomendaciones para la parcela indicada.\n\n"
-        "- GET: listado histórico para la parcela.\n"
-        "- POST: crear recomendación (propietario o admin/tecnico).\n\n"
-        "Body (ejemplo): { 'titulo': '..', 'detalle': '..', 'score': 0.9, 'source': 'rule', 'tipo': 'riego' }"
-    ),
-    parameters=[
-        OpenApiParameter(name='parcela_id', description='ID de la parcela', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH)
-    ],
-    request=RecommendationSerializer,
-    responses={200: RecommendationSerializer(many=True), 201: RecommendationSerializer}
-)
-class RecommendationByParcelaListCreateView(generics.ListCreateAPIView):
-    serializer_class = RecommendationSerializer
-
-    def get_permissions(self):
-        # GET -> ver, POST -> crear
-        op = 'ver' if self.request.method == 'GET' else 'crear'
-        return [permissions.IsAuthenticated(), HasOperationPermission('recomendaciones', op)]
+        return [permissions.IsAuthenticated(), HasOperationPermission('alertas', 'ver')]
 
     def get_parcela_or_404(self, parcela_id):
         try:
@@ -75,59 +44,53 @@ class RecommendationByParcelaListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         parcela_id = self.kwargs.get('parcela_id')
         parcela = self.get_parcela_or_404(parcela_id)
-        if not tiene_permiso(user, 'recomendaciones', 'ver'):
-            raise PermissionDenied("No tienes permiso para ver recomendaciones.")
-        if role_name(user) in ['superadmin', 'administrador', 'tecnico'] or parcela.usuario == user:
-            return Recommendation.objects.filter(parcela=parcela).order_by('-created_at')
-        raise PermissionDenied("No tienes permiso para ver las recomendaciones de esta parcela.")
-
-    def perform_create(self, serializer):
-        user = self.request.user
-        parcela_id = self.kwargs.get('parcela_id')
-        parcela = self.get_parcela_or_404(parcela_id)
-        if not tiene_permiso(user, 'recomendaciones', 'crear'):
-            raise PermissionDenied("No tienes permiso para crear recomendaciones.")
-        if role_name(user) not in ['superadmin', 'administrador', 'tecnico'] and parcela.usuario != user:
-            raise PermissionDenied("No puedes crear recomendaciones para una parcela que no es tuya.")
-        serializer.save(parcela=parcela)
+        if not tiene_permiso(user, 'alertas', 'ver'):
+            raise PermissionDenied("No tienes permiso para ver alertas.")
+        qs = Recommendation.objects.select_related('parcela').filter(parcela=parcela).order_by('-created_at')
+        tipo = self.request.query_params.get('tipo')
+        if tipo:
+            qs = qs.filter(tipo=tipo)
+        if role_name(user) in ['superadmin', 'administrador', 'tecnico']:
+            return qs
+        return qs.filter(parcela__usuario=user)
 
 @extend_schema(
-    tags=['Recomendaciones'],
-    summary='Detalle / actualizar / eliminar recomendación',
+    tags=['Alertas'],
+    summary='Listar alertas del usuario (todas sus parcelas)',
     description=(
-        "Recupera, actualiza o elimina una recomendación.\n\n"
-        "- Acceso: admin/tecnico/superadmin o propietario de la parcela.\n"
-        "- Requiere permisos por operación: ver/actualizar/eliminar en 'recomendaciones'."
+        "Devuelve todas las alertas/recomendaciones asociadas a las parcelas del usuario autenticado.\n"
+        "Roles admin/superadmin/técnico: ven todas las alertas del sistema.\n"
+        "Agricultor: solo alertas de sus propias parcelas.\n"
+        "Filtros: ?tipo=alerta&severity=high&status=new"
     ),
-    request=RecommendationSerializer,
-    responses={200: RecommendationSerializer, 204: None},
     parameters=[
-        OpenApiParameter(name='pk', description='ID de la recomendación', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH)
-    ]
+        OpenApiParameter(name='tipo', required=False, type=OpenApiTypes.STR),
+        OpenApiParameter(name='severity', required=False, type=OpenApiTypes.STR),
+        OpenApiParameter(name='status', required=False, type=OpenApiTypes.STR),
+    ],
+    responses={200: RecommendationSerializer(many=True)}
 )
-class RecommendationDetailView(generics.RetrieveUpdateDestroyAPIView):
+class RecommendationUserListView(generics.ListAPIView):
     serializer_class = RecommendationSerializer
 
     def get_permissions(self):
-        if self.request.method == 'GET':
-            return [permissions.IsAuthenticated(), HasOperationPermission('recomendaciones', 'ver'), OwnsObjectOrAdmin()]
-        if self.request.method in ['PUT', 'PATCH']:
-            return [permissions.IsAuthenticated(), HasOperationPermission('recomendaciones', 'actualizar'), OwnsObjectOrAdmin()]
-        if self.request.method == 'DELETE':
-            return [permissions.IsAuthenticated(), HasOperationPermission('recomendaciones', 'eliminar'), OwnsObjectOrAdmin()]
-        return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), HasOperationPermission('alertas', 'ver')]
 
-    def get_object(self):
+    def get_queryset(self):
         user = self.request.user
-        pk = self.kwargs.get('pk')
-        try:
-            obj = Recommendation.objects.select_related('parcela').get(pk=pk)
-        except Recommendation.DoesNotExist:
-            raise NotFound("Recomendación no encontrada.")
-        if not tiene_permiso(user, 'recomendaciones', 'ver'):
-            raise PermissionDenied("No tienes permiso para ver recomendaciones.")
-        if role_name(user) in ['superadmin', 'administrador', 'tecnico']:
-            return obj
-        if getattr(obj.parcela, 'usuario', None) == user:
-            return obj
-        raise PermissionDenied("No tienes permiso sobre esta recomendación.")
+        if not tiene_permiso(user, 'alertas', 'ver'):
+            raise PermissionDenied("No tienes permiso para ver alertas.")
+        qs = Recommendation.objects.select_related('parcela').all().order_by('-created_at')
+        if role_name(user) not in ['superadmin', 'administrador', 'tecnico']:
+            qs = qs.filter(parcela__usuario=user)
+        # Filtros opcionales
+        tipo = self.request.query_params.get('tipo')
+        if tipo:
+            qs = qs.filter(tipo=tipo)
+        severity = self.request.query_params.get('severity')
+        if severity:
+            qs = qs.filter(severity=severity)
+        status = self.request.query_params.get('status')
+        if status:
+            qs = qs.filter(status=status)
+        return qs

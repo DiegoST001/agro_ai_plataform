@@ -15,6 +15,7 @@ class Task(models.Model):
         ('en_progreso', 'En Progreso'),
         ('completada', 'Completada'),
         ('cancelada', 'Cancelada'),
+        ('vencida', 'Vencida'),  # nuevo estado para tareas cuyo tiempo pasó sin completarse
     ]
 
     DECISION_CHOICES = [
@@ -36,6 +37,15 @@ class Task(models.Model):
 
     origen = models.CharField(max_length=10, choices=ORIGEN_CHOICES, default='manual')
     decision = models.CharField(max_length=10, choices=DECISION_CHOICES, default='pendiente')
+
+    # link opcional a Recommendation (compatibilidad con migraciones/código)
+    recomendacion = models.ForeignKey(
+        "recommendations.Recommendation",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="tareas"
+    )
 
     deleted_at = models.DateTimeField(null=True, blank=True)  # eliminación lógica
     created_at = models.DateTimeField(auto_now_add=True)
@@ -76,6 +86,30 @@ class Task(models.Model):
         self.save(update_fields=['decision', 'updated_at'])
         if soft_delete_when_ia and self.origen == 'ia':
             self.soft_delete()
+
+    @property
+    def is_overdue(self) -> bool:
+        return self.fecha_programada is not None and self.fecha_programada < timezone.now() and self.estado in ['pendiente', 'en_progreso']
+
+    def mark_overdue(self, save: bool = True):
+        """
+        Marcar esta tarea como vencida si está vencida.
+        No se ejecuta automáticamente en save() para evitar writes inesperados;
+        puede llamarse desde un job programado o desde vistas cuando corresponda.
+        """
+        if self.is_overdue:
+            self.estado = 'vencida'
+            if save:
+                self.save(update_fields=['estado', 'updated_at'])
+
+    @classmethod
+    def mark_overdue_tasks(cls):
+        """
+        Método utilitario para jobs: marca en lote las tareas que están pendientes/en_progreso y ya vencieron.
+        """
+        now = timezone.now()
+        qs = cls.all_objects.filter(fecha_programada__lt=now, estado__in=['pendiente', 'en_progreso'], deleted_at__isnull=True)
+        qs.update(estado='vencida', updated_at=now)
 
     @classmethod
     def create_recommended(cls, parcela, tipo, descripcion, fecha_programada, snapshot=None, origen_id=None):

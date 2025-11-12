@@ -14,6 +14,7 @@ from .permissions import OwnsNodeOrAdmin  # <- nuevo
 from django.db.models import Q
 from rest_framework.generics import GenericAPIView
 from rest_framework import serializers
+from recommendations.rules_engine import upsert_alert
 
 # márgenes por defecto (usados en Swagger y en la vista)
 PRE_MARGIN_DEFAULT = 10
@@ -298,6 +299,17 @@ class NodeIngestView(GenericAPIView):
                 except Exception:
                     pass
         node.save(update_fields=list(dict.fromkeys(update_fields)))
+
+        if node.bateria is not None and node.bateria < 20:
+            upsert_alert(parcela, "Batería baja nodo maestro",
+                         f"Nivel batería {node.bateria}%", code=f"node_bateria_{node.id}",
+                         severity='high', entity_type='node', entity_ref=str(node.id),
+                         meta={'bateria': node.bateria}, source='rules.node')
+        if node.senal is not None and node.senal < -90:
+            upsert_alert(parcela, "Señal débil nodo maestro",
+                         f"Señal {node.senal}dBm", code=f"node_senal_{node.id}",
+                         severity='medium', entity_type='node', entity_ref=str(node.id),
+                         meta={'senal': node.senal}, source='rules.node')
 
         for lectura in payload.get("lecturas", []):
             codigo_sec = lectura.get("nodo_codigo")

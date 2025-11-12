@@ -21,18 +21,17 @@ from parcels.models import Parcela
         "- Soporta filtros por `estado` y ordenamiento (`ordering`).\n\n"
         "POST /api/tareas/:\n"
         "- Crea una tarea asociada a una parcela.\n"
-        "- Cuerpo JSON esperado (ejemplos abajo):\n"
+        "- Campos requeridos en el body (ejemplo):\n"
         "  {\n"
         "    \"parcela_id\": <int>,            # id de la parcela (requerido)\n"
-        "    \"tipo\": <string>,              # p.ej. 'riego', 'fertilizacion' (requerido)\n"
-        "    \"descripcion\": <string>,       # texto descriptivo / puede incluir snapshot\n"
-        "    \"fecha_programada\": <datetime>,# ISO-8601\n"
-        "    \"estado\": <string>,            # 'pendiente'|'en_progreso'|'completada'|'cancelada'\n"
-        "    \"origen\": <'manual'|'ia'>      # 'ia' para recomendaciones generadas por el motor\n"
+        "    \"tipo\": <string>,              # asunto / tipo de tarea (requerido)\n"
+        "    \"descripcion\": <string>,       # descripción (opcional pero recomendado)\n"
+        "    \"fecha_programada\": <datetime> # ISO-8601 (recomendado)\n"
         "  }\n\n"
+        "Estados recibidos: pendiente, en_progreso, completada, cancelada, vencida.\n\n"
         "Notas importantes:\n"
-        "- Para `origen='ia'` la tarea se crea con `decision='pendiente'` y requiere que el usuario acepte/rechace.\n"
-        "- El sistema define AUTO_REJECT_DAYS = 3: un job programado puede auto-rechazar (soft-delete) recomendaciones IA pendientes después de ese plazo.\n\n"
+        "- No es necesario indicar 'estado', 'origen' o 'decision' al crear: el endpoint asigna por defecto estado='pendiente', origen='manual' y decision='pendiente'.\n"
+        "- Las tareas generadas por la IA deben crearse mediante el flujo interno correspondiente (create_recommended) y conservarán origen='ia'.\n\n"
         "Códigos de respuesta:\n"
         "- 200: lista de tareas\n"
         "- 201: tarea creada\n"
@@ -42,7 +41,7 @@ from parcels.models import Parcela
     ),
     parameters=[
         OpenApiParameter(name='ordering', description='Ordenar por campo (ej: created_at, -created_at)', required=False, type=OpenApiTypes.STR),
-        OpenApiParameter(name='estado', description='Filtrar por estado (pendiente|en_progreso|completada|cancelada)', required=False, type=OpenApiTypes.STR),
+        OpenApiParameter(name='estado', description='Filtrar por estado (pendiente|en_progreso|completada|cancelada|vencida)', required=False, type=OpenApiTypes.STR),
     ],
     request=TaskSerializer,
     responses={
@@ -67,18 +66,17 @@ from parcels.models import Parcela
                 "decision": "pendiente",
                 "created_at": "2025-10-20T12:00:00Z",
                 "updated_at": "2025-10-20T12:00:00Z"
-            }]
+            }],
+            response_only=True
         ),
         OpenApiExample(
             "Crear ejemplo",
-            summary="Body ejemplo POST /api/tareas/",
+            summary="Body ejemplo POST /api/tareas/ (campos requeridos)",
             value={
                 "parcela_id": 5,
                 "tipo": "riego",
                 "descripcion": "Regar sector norte 20 minutos",
-                "fecha_programada": "2025-10-25T07:00:00Z",
-                "estado": "pendiente",
-                "origen": "manual"
+                "fecha_programada": "2025-10-25T07:00:00Z"
             },
             request_only=True
         )
@@ -97,6 +95,10 @@ class TaskListCreateView(generics.ListCreateAPIView):
         if not tiene_permiso(user, 'tareas', 'ver'):
             raise PermissionDenied("No tienes permiso para ver tareas.")
         qs = self.queryset
+        # opcional: marcar vencidas en lectura (no obligatorio)
+        # from django.db import transaction
+        # with transaction.atomic():
+        #     Task.mark_overdue_tasks()
         if role_name(user) in ['superadmin', 'administrador', 'tecnico']:
             return qs
         return qs.filter(parcela__usuario=user)
@@ -114,7 +116,8 @@ class TaskListCreateView(generics.ListCreateAPIView):
             raise NotFound("Parcela no encontrada.")
         if role_name(user) not in ['superadmin', 'administrador', 'tecnico'] and parcela.usuario != user:
             raise PermissionDenied("No puedes crear tareas en parcelas que no son tuyas.")
-        serializer.save(parcela=parcela)
+        # Forzar valores por defecto: estado/origen/decision no deben venir del cliente
+        serializer.save(parcela=parcela, estado='pendiente', origen='manual', decision='pendiente')
 
 
 @extend_schema(
@@ -128,7 +131,8 @@ class TaskListCreateView(generics.ListCreateAPIView):
         "Acceso:\n"
         "- Admin / Superadmin / Técnico: acceso completo.\n"
         "- Agricultor: solo si es propietario de la parcela.\n\n"
-        "Cuerpo/Respuesta: mismo esquema que en el endpoint global, salvo que para POST el campo parcela_id no es necesario (y se ignora si está presente).\n"
+        "Cuerpo/Respuesta: para POST solo enviar { 'tipo', 'descripcion', 'fecha_programada' }.\n\n"
+        "Estados recibidos: pendiente, en_progreso, completada, cancelada, vencida.\n"
     ),
     parameters=[
         OpenApiParameter(name='parcela_id', description='ID de la parcela (path)', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH),
@@ -142,7 +146,7 @@ class TaskListCreateView(generics.ListCreateAPIView):
     },
     examples=[
         OpenApiExample(
-            "Lista parcela ejemplo",
+            "Lista parcela ejemplo (respuesta)",
             summary="GET /api/parcelas/{parcela_id}/tareas/ ejemplo",
             value=[{
                 "id": 12,
@@ -155,7 +159,18 @@ class TaskListCreateView(generics.ListCreateAPIView):
                 "decision": "pendiente",
                 "created_at": "2025-10-20T12:00:00Z",
                 "updated_at": "2025-10-20T12:00:00Z"
-            }]
+            }],
+            response_only=True
+        ),
+        OpenApiExample(
+            "Crear parcela ejemplo (request)",
+            summary="Body ejemplo POST /api/parcelas/{parcela_id}/tareas/ (campos requeridos)",
+            value={
+                "tipo": "fertilizacion",
+                "descripcion": "Aplicar fertilizante NPK 10-10-10",
+                "fecha_programada": "2025-11-01T08:00:00Z"
+            },
+            request_only=True
         )
     ]
 )
@@ -188,7 +203,14 @@ class TaskByParcelaListCreateView(generics.ListCreateAPIView):
             raise PermissionDenied("No tienes permiso para crear tareas.")
         if role_name(user) not in ['superadmin', 'administrador', 'tecnico'] and parcela.usuario != user:
             raise PermissionDenied("No puedes crear tareas en esta parcela.")
-        serializer.save(parcela=parcela)
+        # Forzar valores por defecto
+        serializer.save(parcela=parcela, estado='pendiente', origen='manual', decision='pendiente')
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        if self.request.method == 'POST':
+            ctx['parcela_forced'] = True
+        return ctx
 
 
 @extend_schema(
@@ -204,11 +226,9 @@ class TaskByParcelaListCreateView(generics.ListCreateAPIView):
         "- Agricultor: solo si es propietario de la parcela vinculada.\n\n"
         "Comportamiento especial para recomendaciones IA:\n"
         "- Si la tarea tiene `origen='ia'` aparecerá con `decision='pendiente'` hasta que el usuario la acepte (decision='aceptada') o la rechace (decision='rechazada').\n"
-        "- Un job programado puede usar AUTO_REJECT_DAYS para auto-rechazar (soft-delete) recomendaciones IA pendientes tras ese periodo.\n\n"
-        "Respuestas:\n"
-        "- 200: objeto tarea\n"
-        "- 204: eliminado\n"
-        "- 403/404 según permisos o recurso\n"
+        "- No se permite modificar 'origen' ni 'decision' desde este endpoint. Para aceptar/rechazar una recomendación IA use los endpoints específicos (accept/reject) o las acciones previstas.\n\n"
+        "Estados recibidos (válidos para 'estado'): pendiente, en_progreso, completada, cancelada, vencida.\n"
+        "- Al actualizar 'estado' vía PUT/PATCH, el valor debe ser uno de los anteriores.\n"
     ),
     parameters=[
         OpenApiParameter(name='pk', description='ID de la tarea', required=True, type=OpenApiTypes.INT, location=OpenApiParameter.PATH),
@@ -222,7 +242,7 @@ class TaskByParcelaListCreateView(generics.ListCreateAPIView):
     },
     examples=[
         OpenApiExample(
-            "Detalle ejemplo",
+            "Detalle ejemplo (response)",
             value={
                 "id": 12,
                 "parcela_id": 7,
@@ -234,7 +254,19 @@ class TaskByParcelaListCreateView(generics.ListCreateAPIView):
                 "decision": "pendiente",
                 "created_at": "2025-10-20T12:00:00Z",
                 "updated_at": "2025-10-20T12:00:00Z"
-            }
+            },
+            response_only=True
+        ),
+        OpenApiExample(
+            "Actualizar ejemplo (request)",
+            summary="Body ejemplo PUT/PATCH /api/tareas/{pk}/ (actualización mínima)",
+            value={
+                "tipo": "fertilizacion",
+                "descripcion": "Aplicar fertilizante NPK 10-10-10",
+                "fecha_programada": "2025-11-01T08:00:00Z",
+                "estado": "completada"
+            },
+            request_only=True
         )
     ]
 )
@@ -254,7 +286,7 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
         user = self.request.user
         pk = self.kwargs.get('pk')
         try:
-            obj = Task.objects.select_related('parcela').get(pk=pk)
+            obj = Task.objects.select_related('parcela', 'recomendacion').get(pk=pk)
         except Task.DoesNotExist:
             raise NotFound("Tarea no encontrada.")
         if not tiene_permiso(user, 'tareas', 'ver'):
@@ -264,3 +296,15 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
         if getattr(obj.parcela, 'usuario', None) == user:
             return obj
         raise PermissionDenied("No tienes permiso sobre esta tarea.")
+
+    def perform_update(self, serializer):
+        # impedir cambios directos de origen/decision desde este endpoint
+        if 'origen' in self.request.data or 'decision' in self.request.data:
+            raise ValidationError({"detail": "No puedes modificar 'origen' ni 'decision' desde este endpoint."})
+        # validar estado si se intenta actualizar
+        estado = self.request.data.get('estado')
+        if estado is not None:
+            allowed = [k for k, _ in Task.ESTADO_CHOICES]
+            if estado not in allowed:
+                raise ValidationError({"estado": f"Estado inválido. Valores permitidos: {allowed}"})
+        serializer.save()
