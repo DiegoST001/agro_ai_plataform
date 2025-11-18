@@ -9,6 +9,9 @@ urlpatterns = [
     # path('parcelas/crear_mia/', views.ParcelaCreateOwnView.as_view(), name='parcelas-create-own'),
     path('parcelas/<int:pk>/', views.ParcelaDetailView.as_view(), name='parcelas-detail'),
 
+    # Parcela images (IA / análisis)
+    path('parcelas/<int:parcela_id>/images/', views.ParcelaImageListCreateView.as_view(), name='parcela-images-list-create'),
+    path('parcelas/<int:parcela_id>/images/<int:image_id>/', views.ParcelaImageDetailView.as_view(), name='parcela-image-detail'),
     # Ciclos (por parcela)
     path('parcelas/<int:parcela_id>/ciclos/', views.ParcelaCicloListCreateView.as_view(), name='parcela-ciclos-list-create'),
     path('ciclos/<int:pk>/', views.CicloDetailView.as_view(), name='ciclo-detail'),

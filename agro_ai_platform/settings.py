@@ -14,14 +14,15 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
+import cloudinary
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Carga las variables del archivo .env
-load_dotenv()
+load_dotenv(BASE_DIR / '.env')
 
 def _csv(key, default=""):
-    raw = os.getenv(key, default)
+    raw = os.getenv(key, default) or ""
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key')
@@ -32,7 +33,7 @@ ALLOWED_HOSTS = _csv("ALLOWED_HOSTS", "localhost,127.0.0.1")
 _csrf = _csv("CSRF_TRUSTED_ORIGINS", "")
 CSRF_TRUSTED_ORIGINS = [
     v if "://" in v else f"https://{v}"
-    for v in _csv("CSRF_TRUSTED_ORIGINS", "")
+    for v in _csrf
 ] if _csrf else []
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -185,3 +186,17 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
+# Solo en desarrollo: relajar CORS / ALLOWED_HOSTS para facilitar pruebas con túneles
+if DEBUG:
+    # Permite cualquier origen (útil para frontend local / túneles). NO usar en producción.
+    CORS_ALLOW_ALL_ORIGINS = True
+    # Permitir envío de cookies/credenciales si lo necesitas en dev:
+    CORS_ALLOW_CREDENTIALS = True
+
+    # Evita DisallowedHost en túneles/hosts dinámicos (usar solo en dev)
+    # Alternativa más segura: listar explícitamente los hosts/túneles en ALLOWED_HOSTS
+    ALLOWED_HOSTS = ["*"]
+
+CLOUDINARY_URL = os.getenv("CLOUDINARY_URL")
+if CLOUDINARY_URL:
+    cloudinary.config(cloudinary_url=CLOUDINARY_URL)

@@ -349,14 +349,22 @@ class AdminUserListView(generics.ListAPIView):
         responses=AdminUserListSerializer,
     ),
 )
-class AdminUserDetailView(generics.RetrieveAPIView):
+class AdminUserDetailView(generics.RetrieveUpdateAPIView):
+    """
+    GET: detalle de usuario (permiso 'administracion','ver')
+    PUT/PATCH: actualizar usuario (permiso 'administracion','actualizar')
+    """
     queryset = User.objects.all()
     serializer_class = UserDetailSerializer
+    http_method_names = ['get', 'put', 'patch']
+
     def get_permissions(self):
-        return [
-            permissions.IsAuthenticated(),
-            HasOperationPermission('administracion', 'ver')
-        ]
+        base = [permissions.IsAuthenticated()]
+        if self.request.method == 'GET':
+            base.append(HasOperationPermission('administracion', 'ver'))
+        else:
+            base.append(HasOperationPermission('administracion', 'actualizar'))
+        return base
 
 @extend_schema(
     tags=['Prospectos'],

@@ -29,8 +29,27 @@ class Parcela(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    imagen_url = models.URLField(max_length=1024, blank=True, null=True)
+    imagen_public_id = models.CharField(max_length=255, blank=True, null=True)
+
     def __str__(self):
         return f'{self.nombre} ({self.usuario_id})'
+
+# Añadir ParcelaImage separado (para IA / análisis, muchas por parcela)
+class ParcelaImage(models.Model):
+    parcela = models.ForeignKey('parcels.Parcela', on_delete=models.CASCADE, related_name='images')
+    image_url = models.URLField(max_length=1024)
+    public_id = models.CharField(max_length=255, blank=True, null=True)
+    filename = models.CharField(max_length=255, blank=True, null=True)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'parcels_parcelaimage'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Image {self.pk} for parcela {self.parcela_id}'
 
 
 class Ciclo(models.Model):

@@ -1,0 +1,252 @@
+// Plataforma agrícola con IA - MER actualizado (incluye Cultivo/Variedad/Etapa/ReglaPorEtapa)
+// Alertas/recomendaciones unificadas en 'recomendaciones'
+// Ciclos (Ciclo) referencia a Cultivo/Variedad/Etapa
+// Campos operativos: fingerprint, code, status, severity, meta
+
+Table usuarios {
+  id integer [primary key]
+  username varchar(50) [unique]
+  email varchar(100) [unique, not null]
+  password_hash varchar(255)
+  rol_id integer [not null]
+  is_active boolean [default: true]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table perfiles_usuarios {
+  id integer [primary key]
+  usuario_id integer [not null, unique]
+  nombres varchar(50)
+  apellidos varchar(50)
+  telefono varchar(15)
+  dni varchar(8)
+  fecha_nacimiento date
+  experiencia_agricola int
+  foto_perfil varchar(255)
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table roles {
+  id integer [primary key]
+  nombre varchar(50) [unique, not null]
+  descripcion text
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table modulos {
+  id integer [primary key]
+  nombre varchar(50) [unique, not null]
+  descripcion text
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table operaciones {
+  id integer [primary key]
+  nombre varchar(50) [unique, not null]
+  descripcion text
+  modulo_id integer [not null]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table roles_operaciones {
+  id integer [primary key]
+  rol_id integer [not null]
+  operacion_id integer [not null]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table tokens_usuarios {
+  id integer [primary key]
+  usuario_id integer [not null]
+  token varchar(255) [not null]
+  fecha_creacion timestamp
+  fecha_expiracion timestamp
+  estado varchar
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table parcelas {
+  id integer [primary key]
+  nombre varchar(100)
+  ubicacion varchar(255)
+  tamano_hectareas decimal(10,2)
+  coordenadas varchar
+  altitud decimal(8,2)
+  usuario_id integer [not null]
+  etapa_inicio date
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table cultivos {
+  id integer [primary key]
+  nombre varchar(50) [unique, not null]
+  descripcion text
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table variedades {
+  id integer [primary key]
+  cultivo_id integer [not null]
+  nombre varchar(50)
+  descripcion text
+  created_at timestamp
+  updated_at timestamp
+  // Unique constraint: (cultivo_id, nombre)
+}
+
+Table etapas_cultivo {
+  id integer [primary key]
+  variedad_id integer [not null]
+  nombre varchar(80) [not null]
+  orden int
+  duracion_estimada_dias int
+  activo boolean [default: true]
+  descripcion text
+  created_at timestamp
+  updated_at timestamp
+  // Unique constraint: (variedad_id, nombre)
+}
+
+Table reglas_por_etapa {
+  id integer [primary key]
+  etapa_id integer [not null]
+  parametro varchar(50) [not null]
+  minimo decimal(10,3)
+  maximo decimal(10,3)
+  accion_si_menor text
+  accion_si_mayor text
+  activo boolean [default: true]
+  prioridad int
+  created_by integer
+  effective_from date
+  effective_to date
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table ciclos {
+  id integer [primary key]
+  parcela_id integer [not null]
+  cultivo_id integer
+  variedad_id integer
+  etapa_actual_id integer
+  etapa_inicio date
+  estado varchar(20)
+  fecha_cierre date
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table nodos_maestros {
+  id integer [primary key]
+  codigo varchar(50) [unique, not null]
+  parcela_id integer [not null]
+  lat decimal(9,6)
+  lng decimal(9,6)
+  estado varchar
+  bateria int
+  senal int
+  last_seen timestamp
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table nodos_secundarios {
+  id integer [primary key]
+  codigo varchar(50) [unique, not null]
+  maestro_id integer [not null]
+  lat decimal(9,6)
+  lng decimal(9,6)
+  estado varchar
+  bateria int
+  senal int
+  last_seen timestamp
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table tokens_nodos {
+  id integer [primary key]
+  nodo_id integer [not null]
+  token varchar(255) [not null]
+  fecha_creacion timestamp
+  fecha_expiracion timestamp
+  estado varchar
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table recomendaciones {
+  id integer [primary key]
+  parcela_id integer [not null]
+  titulo varchar(120)
+  detalle text
+  tipo varchar(50)
+  severity varchar(10)
+  status varchar(10)
+  score float
+  source varchar(50)
+  code varchar(100)
+  entity_type varchar(50)
+  entity_ref varchar(100)
+  meta json
+  fingerprint varchar(32) [unique, not null]
+  expires_at timestamp
+  created_at timestamp
+  updated_at timestamp
+  // Indexes recommended: (parcela_id, created_at), (code), (status)
+}
+
+Table tareas {
+  id integer [primary key]
+  parcela_id integer [not null]
+  recomendacion_id integer
+  tipo varchar(50)
+  descripcion text
+  fecha_programada timestamp
+  estado varchar(20)
+  origen varchar(20)
+  decision varchar(20)
+  deleted_at timestamp
+  created_at timestamp
+  updated_at timestamp
+}
+
+// Relaciones RBAC
+Ref: usuarios.rol_id > roles.id
+Ref: roles_operaciones.rol_id > roles.id
+Ref: roles_operaciones.operacion_id > operaciones.id
+Ref: operaciones.modulo_id > modulos.id
+Ref: perfiles_usuarios.usuario_id > usuarios.id
+Ref: tokens_usuarios.usuario_id > usuarios.id
+
+// Relaciones de dominio
+Ref: parcelas.usuario_id > usuarios.id
+Ref: variedades.cultivo_id > cultivos.id
+Ref: etapas_cultivo.variedad_id > variedades.id
+Ref: reglas_por_etapa.etapa_id > etapas_cultivo.id
+
+Ref: ciclos.parcela_id > parcelas.id
+Ref: ciclos.cultivo_id > cultivos.id
+Ref: ciclos.variedad_id > variedades.id
+Ref: ciclos.etapa_actual_id > etapas_cultivo.id
+
+Ref: nodos_maestros.parcela_id > parcelas.id
+Ref: nodos_secundarios.maestro_id > nodos_maestros.id
+Ref: tokens_nodos.nodo_id > nodos_maestros.id
+
+Ref: recomendaciones.parcela_id > parcelas.id
+Ref: tareas.parcela_id > parcelas.id
+Ref: tareas.recomendacion_id > recomendaciones.id
+
+// MongoDB (colección lecturas_sensores)
+// Ejemplo: { "nodo_id": "NODE-12345", "parcela_id": 12, "sensor_tipo": "HumedadSuelo", "valor": 35.6, "unidad": "%", "timestamp": "2025-09-01T18:30:00Z" }

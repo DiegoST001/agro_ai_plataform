@@ -2,10 +2,11 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from typing import Any, Optional, Dict
 
-from .models import Parcela, Ciclo
+from .models import Parcela, Ciclo, ParcelaImage
 from crops.models import Cultivo, Variedad, Etapa
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
+import cloudinary.uploader
 
 User = get_user_model()
 
@@ -61,6 +62,13 @@ class CicloReadSerializer(serializers.ModelSerializer):
         return self._to_basic(obj.etapa_actual)
 
 
+class ParcelaImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ParcelaImage
+        fields = ('id', 'image_url', 'public_id', 'filename', 'uploaded_by', 'created_at')
+        read_only_fields = ('id', 'image_url', 'public_id', 'filename', 'uploaded_by', 'created_at')
+
+
 # -----------------------
 # Parcela serializers
 # -----------------------
@@ -70,24 +78,46 @@ class ParcelaCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Parcela
-        fields = ('id', 'usuario', 'nombre', 'ubicacion', 'tamano_hectareas', 'latitud', 'longitud', 'altitud', 'ciclo')
-        read_only_fields = ('id',)
+        fields = ('id', 'usuario', 'nombre', 'ubicacion', 'tamano_hectareas', 'latitud', 'longitud', 'altitud', 'ciclo', 'imagen_url', 'imagen_public_id')
+        read_only_fields = ('id', 'imagen_url', 'imagen_public_id')
 
     def create(self, validated_data):
+        # crea la parcela normalmente
         ciclo_data = validated_data.pop('ciclo', None)
         parcela = super().create(validated_data)
         if ciclo_data:
             Ciclo.objects.create(parcela=parcela, **ciclo_data)
-        return parcela
 
+        # Si se subió un fichero 'imagen' en la request (multipart/form-data), subirlo a Cloudinary y guardar URL
+        request = self.context.get('request')
+        if request and hasattr(request, 'FILES'):
+            file_obj = request.FILES.get('imagen')
+            if file_obj:
+                try:
+                    res = cloudinary.uploader.upload(
+                        file_obj,
+                        folder=f"agro_ai/parcels_preview/{parcela.id}",
+                        resource_type="image",
+                        use_filename=True,
+                        unique_filename=True
+                    )
+                    parcela.imagen_url = res.get('secure_url')
+                    parcela.imagen_public_id = res.get('public_id')
+                    parcela.save(update_fields=['imagen_url', 'imagen_public_id', 'updated_at'])
+                except Exception:
+                    # no romper la creación por fallo en upload; puedes loggear aquí
+                    pass
+
+        return parcela
 
 class ParcelaReadSerializer(serializers.ModelSerializer):
     usuario = MinimalUserSerializer(read_only=True)
     ciclos = CicloReadSerializer(many=True, read_only=True)
+    images = ParcelaImageSerializer(many=True, read_only=True)
 
     class Meta:
         model = Parcela
-        fields = ('id', 'usuario', 'nombre', 'ubicacion', 'tamano_hectareas', 'latitud', 'longitud', 'altitud', 'ciclos')
+        fields = ('id', 'usuario', 'nombre', 'ubicacion', 'tamano_hectareas', 'latitud', 'longitud', 'altitud', 'ciclos', 'images', 'imagen_url')
 
 
 class ParcelaUpdateSerializer(serializers.ModelSerializer):

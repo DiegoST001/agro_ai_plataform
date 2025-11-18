@@ -4,22 +4,22 @@ from datetime import date
 from rest_framework import permissions, generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
+import cloudinary.uploader
 
 from drf_spectacular.utils import extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample
-
 from users.permissions import HasOperationPermission, role_name, tiene_permiso
 
 # models
-from .models import Parcela, Ciclo
-from crops.models import Etapa
-
-# serializers
+from .models import Parcela, Ciclo, ParcelaImage
+# serializers (asegúrate que ParcelaImageSerializer esté definido en serializers.py)
 from .serializers import (
     CicloCreateSerializer,
     CicloReadSerializer,
     ParcelaCreateSerializer,
     ParcelaReadSerializer,
     ParcelaUpdateSerializer,
+    ParcelaImageSerializer
 )
 
 # ----------------------------------------
@@ -30,32 +30,37 @@ from .serializers import (
         tags=['ciclos'],
         summary='Listar ciclos de una parcela',
         description=(
-            "Lista todos los ciclos asociados a la parcela indicada (por parcela_id).\n\n"
-            "Permisos: requiere 'parcelas.ver'.\n\n"
-            "Reglas de visibilidad:\n"
-            "- Administradores/técnicos/superadmin: pueden ver ciclos de cualquier parcela.\n"
-            "- Agricultores: solo ciclos de sus parcelas.\n\n"
-            "Parámetros:\n"
-            "- parcela_id (path): ID de la parcela.\n\n"
-            "Respuesta: lista paginada de CicloReadSerializer (id, parcela, cultivo, variedad, etapa_actual, etapa_inicio, estado, fecha_cierre)."
+            "Lista los ciclos (campañas) asociados a una parcela.\n\n"
+            "Requiere permiso: `parcelas.ver`.\n\n"
+            "Respuesta: paginada con objetos `CicloReadSerializer`."
         ),
         parameters=[OpenApiParameter(name='parcela_id', type=OpenApiTypes.INT, location=OpenApiParameter.PATH)],
-        responses={200: CicloReadSerializer(many=True)}
+        responses={200: CicloReadSerializer(many=True)},
+        examples=[
+            OpenApiExample('Respuesta ejemplo', value=[{
+                "id": 1,
+                "cultivo": {"id": 2, "nombre": "Palta"},
+                "variedad": {"id": 5, "nombre": "Hass"},
+                "etapa_actual": {"id": 9, "nombre": "Floración"},
+                "etapa_inicio": "2025-10-01",
+                "estado": "activo",
+                "fecha_cierre": None
+            }], response_only=True)
+        ]
     ),
     post=extend_schema(
         tags=['ciclos'],
         summary='Crear ciclo en parcela',
         description=(
-            "Crea un nuevo ciclo (campaña) asociado a la parcela indicada.\n\n"
-            "Permisos: requiere 'parcelas.crear'.\n\n"
-            "Validaciones principales:\n"
-            "- Si se proporciona variedad y cultivo, la variedad debe pertenecer al cultivo.\n"
-            "- Si se proporciona etapa_actual, la etapa debe pertenecer a la variedad indicada.\n\n"
-            "Request: CicloCreateSerializer (cultivo, variedad, etapa_actual, etapa_inicio opcional).\n"
-            "Response: 201 con CicloReadSerializer."
+            "Crear un nuevo ciclo en la parcela indicada.\n\n"
+            "Requiere permiso: `parcelas.crear`.\n"
+            "Validaciones: variedad debe pertenecer al cultivo; etapa a la variedad."
         ),
         request=CicloCreateSerializer,
-        responses={201: CicloReadSerializer}
+        responses={201: CicloReadSerializer},
+        examples=[
+            OpenApiExample('Crear ejemplo', value={"cultivo": 2, "variedad": 5, "etapa_actual": 9, "etapa_inicio": "2025-10-01"}, request_only=True)
+        ]
     )
 )
 class ParcelaCicloListCreateView(generics.ListCreateAPIView):
@@ -112,12 +117,7 @@ class ParcelaCicloListCreateView(generics.ListCreateAPIView):
     get=extend_schema(
         tags=['ciclos'],
         summary='Detalle de ciclo',
-        description=(
-            "Devuelve, actualiza o elimina un ciclo por su id.\n\n"
-            "Permisos: varían por operación (ver/actualizar/eliminar) en módulo 'parcelas'.\n\n"
-            "Visibilidad: los mismos criterios que en la lista por parcela (dueño vs admin).\n\n"
-            "Response: CicloReadSerializer en GET; en PUT/PATCH se espera CicloCreateSerializer."
-        ),
+        description="Recupera/actualiza/elimina un ciclo por su id. Válidos: GET/PUT/PATCH/DELETE.",
         responses={200: CicloReadSerializer}
     ),
     put=extend_schema(tags=['ciclos'], summary='Actualizar ciclo', request=CicloCreateSerializer, responses={200: CicloReadSerializer}),
@@ -163,19 +163,15 @@ class CicloAdvanceEtapaView(APIView):
         tags=['ciclos'],
         summary='Avanzar etapa del ciclo',
         description=(
-            "Avanza la etapa actual de un ciclo cuando se cumple la duración estimada de la etapa o cuando se fuerza.\n\n"
-            "Permisos: requiere 'parcelas.actualizar'.\n\n"
-            "Comportamiento:\n"
-            "- Si `force`=true en el body, se fuerza el avance a la siguiente etapa activa (según orden).\n"
-            "- Si `force` no está, se evalúa la duración_estimada_dias de la etapa_actual y solo se avanza si corresponde.\n\n"
-            "Validaciones:\n"
-            "- El ciclo debe tener etapa_actual para avanzar (en modo force o automático).\n"
-            "- Si no existe siguiente etapa activa se retorna {advanced: false, detail: ...}.\n\n"
-            "Request example: {\"force\": true}\n"
-            "Response: {\"advanced\": bool, \"ciclo_id\": int, \"etapa_actual\": {id,nombre} | null, \"etapa_inicio\": date}."
+            "Avanza la etapa actual de un ciclo.\n\n"
+            "- `force=true` fuerza el avance a la siguiente etapa activa.\n"
+            "- Si no hay siguiente etapa devuelve `{advanced:false}`.\n"
+            "Requiere permiso: `parcelas.actualizar`."
         ),
-        request={'force': OpenApiTypes.BOOL},
-        responses={200: OpenApiExample('Avance', value={"advanced": True, "ciclo_id": 1, "etapa_actual": {"id": 4, "nombre": "Maduración"}, "etapa_inicio": "2025-10-28"})}
+        request={'type': 'object', 'properties': {'force': {'type': 'boolean'}}},
+        responses={
+            200: OpenApiExample('Avance', value={"advanced": True, "ciclo_id": 1, "etapa_actual": {"id": 4, "nombre": "Maduración"}, "etapa_inicio": "2025-10-28"})
+        }
     )
     def post(self, request, pk):
         from rest_framework.exceptions import PermissionDenied, NotFound, ValidationError
@@ -234,14 +230,8 @@ class CicloCloseView(APIView):
     @extend_schema(
         tags=['ciclos'],
         summary='Cerrar ciclo',
-        description=(
-            "Marca un ciclo como 'cerrado' y guarda la fecha de cierre.\n\n"
-            "Permisos: requiere 'parcelas.actualizar'.\n\n"
-            "Request body opcional: {\"fecha\": \"YYYY-MM-DD\"} para establecer una fecha de cierre específica.\n"
-            "Si no se proporciona, se usará la fecha actual.\n\n"
-            "Response: {\"closed\": bool, \"ciclo_id\": int, \"estado\": string, \"fecha_cierre\": date}."
-        ),
-        request={'fecha': OpenApiTypes.STR},
+        description='Marca un ciclo como cerrado. Body opcional: {"fecha":"YYYY-MM-DD"}. Requiere parcelas.actualizar.',
+        request={'type': 'object', 'properties': {'fecha': {'type': 'string', 'format': 'date'}}},
         responses={200: OpenApiExample('Cerrar', value={"closed": True, "ciclo_id": 1, "estado": "cerrado", "fecha_cierre": "2025-10-28"})}
     )
     def post(self, request, pk):
@@ -282,7 +272,8 @@ class CicloAdvanceActiveView(APIView):
     @extend_schema(
         tags=['ciclos'],
         summary='Avanzar etapa del ciclo activo (usuario autenticado)',
-        request={'force': OpenApiTypes.BOOL},
+        description='Avanza el ciclo ACTIVO del usuario (o admin con ?parcela_id). Requiere parcelas.actualizar.',
+        request={'type': 'object', 'properties': {'force': {'type': 'boolean'}}},
         responses={200: OpenApiExample('AvanceActivo', value={"advanced": True, "ciclo_id": 1})}
     )
     def post(self, request):
@@ -345,15 +336,21 @@ class CicloAdvanceActiveView(APIView):
 # ----------------------------------------
 @extend_schema_view(
     get=extend_schema(tags=['parcelas'], summary='Listar parcelas', responses={200: ParcelaReadSerializer(many=True)}),
-    post=extend_schema(tags=['parcelas'], summary='Crear parcela', request=ParcelaCreateSerializer, responses={201: ParcelaReadSerializer})
+    post=extend_schema(
+        tags=['parcelas'],
+        summary='Crear parcela',
+        description='Crear parcela. Si no se pasa "usuario" se asigna request.user. Requiere parcelas.crear.',
+        request=ParcelaCreateSerializer,
+        responses={201: ParcelaReadSerializer},
+        examples=[OpenApiExample('Crear parcela', value={"nombre":"Parcela Demo","ubicacion":"Valle","tamano_hectareas":5.0}, request_only=True)]
+    )
 )
 class ParcelaListCreateView(generics.ListCreateAPIView):
     """
     Lista parcelas visibles para el usuario y permite crear nuevas parcelas.
-    GET: requiere 'parcelas.ver' (agricultor ve solo sus parcelas; admins/tecnicos ven todas).
-    POST: requiere 'parcelas.crear' (si no se envía 'usuario' en payload, se asigna el request.user).
     """
     queryset = Parcela.objects.select_related('usuario').order_by('nombre')
+    parser_classes = [MultiPartParser, FormParser]  # permitir multipart para subir 'imagen' al crear
 
     def get_serializer_class(self):
         return ParcelaReadSerializer if self.request.method == 'GET' else ParcelaCreateSerializer
@@ -379,18 +376,15 @@ class ParcelaListCreateView(generics.ListCreateAPIView):
 
         r = role_name(user)
         if provided_user:
-            # admins/superadmin pueden crear para cualquier usuario
             if r in ['superadmin', 'administrador']:
-                serializer.save()
-                return
-            # si no es admin solo puede crear para sí mismo
-            if getattr(provided_user, 'id', None) != user.id:
-                raise PermissionDenied("No tiene permiso para crear una parcela para otro usuario.")
-            serializer.save(usuario=user)
+                parcel = serializer.save()
+            else:
+                if getattr(provided_user, 'id', None) != user.id:
+                    raise PermissionDenied("No tiene permiso para crear una parcela para otro usuario.")
+                parcel = serializer.save(usuario=user)
         else:
-            # si no se proporciona 'usuario', asignar el request.user
-            serializer.save(usuario=user)
-
+            parcel = serializer.save(usuario=user)
+        # Nota: ParcelaCreateSerializer.create ya procesa request.FILES['imagen'] si existe
 
 @extend_schema_view(
     get=extend_schema(tags=['parcelas'], summary='Detalle de parcela', responses={200: ParcelaReadSerializer}),
@@ -405,6 +399,7 @@ class ParcelaDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     queryset = Parcela.objects.select_related('usuario')
     serializer_class = ParcelaReadSerializer
+    parser_classes = [MultiPartParser, FormParser]  # permitir multipart para actualizar imagen
 
     def get_serializer_class(self):
         if self.request.method == 'GET':
@@ -433,13 +428,31 @@ class ParcelaDetailView(generics.RetrieveUpdateDestroyAPIView):
         return qs.filter(usuario=user)
 
     def perform_update(self, serializer):
+        # permiso y validaciones existentes
         user = self.request.user
         instancia = self.get_object()
         r = role_name(user)
         if r not in ['superadmin', 'administrador', 'tecnico'] and instancia.usuario_id != user.id:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("No puede actualizar una parcela que no es suya.")
-        serializer.save()
+        parcela = serializer.save()
+
+        # si se subió campo 'imagen' en multipart update, subirlo a Cloudinary y guardar en parcela.imagen_url
+        file_obj = self.request.FILES.get('imagen')
+        if file_obj:
+            try:
+                res = cloudinary.uploader.upload(
+                    file_obj,
+                    folder=f"agro_ai/parcels_preview/{parcela.id}",
+                    resource_type="image",
+                    use_filename=True,
+                    unique_filename=True
+                )
+                parcela.imagen_url = res.get('secure_url')
+                parcela.imagen_public_id = res.get('public_id')
+                parcela.save(update_fields=['imagen_url', 'imagen_public_id', 'updated_at'])
+            except Exception:
+                pass
 
     def perform_destroy(self, instance):
         user = self.request.user
@@ -480,6 +493,120 @@ class ParcelaCreateOwnView(generics.CreateAPIView):
     def perform_create(self, serializer):
         # Forzar owner = request.user siempre (doble garantía)
         serializer.save(usuario=self.request.user)
+
+# ----------------------------------------
+# ParcelaImage endpoints (list/create, detail, delete, set-as-parcela-image)
+# ----------------------------------------
+@extend_schema_view(
+    get=extend_schema(tags=['imagenes'], summary='Listar imágenes de una parcela', responses={200: ParcelaImageSerializer(many=True)}),
+    post=extend_schema(
+        tags=['imagenes'],
+        summary='Subir imagen para análisis',
+        description='Enviar multipart/form-data con campo "image". Requiere parcelas.actualizar.',
+        request=None,
+        responses={201: ParcelaImageSerializer}
+    )
+)
+class ParcelaImageListCreateView(generics.ListCreateAPIView):
+    """
+    GET: lista imágenes asociadas a una parcela (requiere 'parcelas.ver')
+    POST: sube una imagen (form-data field 'image') a Cloudinary y crea ParcelaImage (requiere 'parcelas.actualizar')
+    """
+    serializer_class = ParcelaImageSerializer
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [permissions.IsAuthenticated(), HasOperationPermission('parcelas', 'ver')]
+        return [permissions.IsAuthenticated(), HasOperationPermission('parcelas', 'actualizar')]
+
+    def _get_parcela_or_403(self):
+        from rest_framework.exceptions import PermissionDenied, NotFound
+        parcela_id = self.kwargs.get('parcela_id')
+        try:
+            parcela = Parcela.objects.get(pk=parcela_id)
+        except Parcela.DoesNotExist:
+            raise NotFound("Parcela no encontrada.")
+        r = role_name(self.request.user)
+        if r not in ['superadmin', 'administrador', 'tecnico'] and parcela.usuario_id != self.request.user.id:
+            raise PermissionDenied("No puede acceder a imágenes de una parcela que no es suya.")
+        return parcela
+
+    def get_queryset(self):
+        parcela = self._get_parcela_or_403()
+        return ParcelaImage.objects.filter(parcela=parcela).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        # NO se usa: create via post() override
+        return super().perform_create(serializer)
+
+    def post(self, request, parcela_id, *args, **kwargs):
+        from rest_framework.exceptions import NotFound, PermissionDenied
+        parcela = self._get_parcela_or_403()
+
+        # permiso adicional: requiere 'parcelas.actualizar'
+        if not tiene_permiso(request.user, 'parcelas', 'actualizar'):
+            raise PermissionDenied("No tiene permiso para subir imágenes.")
+
+        file_obj = request.FILES.get('image')
+        if not file_obj:
+            return Response({'detail': 'Archivo "image" requerido (form-data).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            res = cloudinary.uploader.upload(
+                file_obj,
+                folder=f"agro_ai/parcels_images/{parcela.id}",
+                resource_type="image",
+                use_filename=True,
+                unique_filename=True
+            )
+        except Exception as e:
+            return Response({'detail': 'Error al subir a Cloudinary', 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        image = ParcelaImage.objects.create(
+            parcela=parcela,
+            image_url=res.get('secure_url'),
+            public_id=res.get('public_id'),
+            filename=res.get('original_filename') or getattr(file_obj, 'name', None),
+            uploaded_by=request.user
+        )
+        serializer = self.get_serializer(image, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class ParcelaImageDetailView(generics.RetrieveDestroyAPIView):
+    """
+    GET: detalle de una imagen
+    DELETE: borrar imagen (también intenta borrar en Cloudinary) — requiere 'parcelas.actualizar'
+    """
+    serializer_class = ParcelaImageSerializer
+    lookup_url_kwarg = 'image_id'
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [permissions.IsAuthenticated(), HasOperationPermission('parcelas', 'ver')]
+        return [permissions.IsAuthenticated(), HasOperationPermission('parcelas', 'actualizar')]
+
+    def get_queryset(self):
+        # restringir según permisos/propiedad
+        user = self.request.user
+        if not tiene_permiso(user, 'parcelas', 'ver'):
+            return ParcelaImage.objects.none()
+        r = role_name(user)
+        qs = ParcelaImage.objects.select_related('parcela__usuario')
+        if r in ['superadmin', 'administrador', 'tecnico']:
+            return qs
+        return qs.filter(parcela__usuario=user)
+
+    def perform_destroy(self, instance):
+        # intentar borrar en Cloudinary si public_id existe
+        try:
+            if instance.public_id:
+                cloudinary.uploader.destroy(instance.public_id, invalidate=True, resource_type='image')
+        except Exception:
+            # ignorar error de borrado remoto para no bloquear eliminación local
+            pass
+        instance.delete()
 
 
 
