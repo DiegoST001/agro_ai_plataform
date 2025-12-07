@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'drf_spectacular_sidecar',
     'brain',
+    'chatbot',
 ]
 
 MIDDLEWARE = [
@@ -97,14 +98,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'agro_ai_platform.wsgi.application'
 
+# Configuración de base de datos PostgreSQL
 DB_URL = os.getenv('DATABASE_URL')
 if DB_URL:
-    # Render requiere SSL; si tu URL no tiene ?sslmode=require, manten ssl_require=True
+    # PostgreSQL desde Render con Internal Database URL
     DATABASES = {
         'default': dj_database_url.parse(DB_URL, conn_max_age=600, ssl_require=True)
     }
 else:
-    # Fallback local (opcional)
+    # Fallback PostgreSQL local
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',

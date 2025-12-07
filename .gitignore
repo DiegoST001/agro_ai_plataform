@@ -21,4 +21,4 @@ staticfiles/
 .idea/
 
 # Otros
-.env
+.env"__pycache__/" 

@@ -98,6 +98,7 @@ urlpatterns = [
     path('api/user/', include('users.user_urls')),
     path("api/ai/", include("ai.urls")),
     path('api/brain/', include('brain.urls')),
+    path('api/chatbot/', include('chatbot.urls')),
 
     # OpenAPI / docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
