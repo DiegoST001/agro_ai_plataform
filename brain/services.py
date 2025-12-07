@@ -1,7 +1,8 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from django.utils import timezone
 from django.db.models import Avg, Count
+from agro_ai_platform.mongo import get_db, to_utc, to_lima, UTC, LIMA_TZ
 
 # intento de reusar conexión a Mongo centralizada
 try:
@@ -18,9 +19,14 @@ except Exception:
     Task = None
 
 try:
-    from parcels.models import Parcela, Etapa, ReglaPorEtapa
-except Exception:
-    Parcela = Etapa = ReglaPorEtapa = None
+    from parcels.models import Parcela, Ciclo
+except ImportError:
+    Parcela = None
+    Ciclo = None
+try:
+    from crops.models import ReglaPorEtapa
+except ImportError:
+    ReglaPorEtapa = None
 
 # helper para truncar timestamps en Python (fallback)
 def _truncate_dt(dt, bucket: str):
@@ -36,90 +42,176 @@ def _truncate_dt(dt, bucket: str):
         return dt.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
     return dt
 
-def aggregate_timeseries(parcela_id: int, parametro: str,
-                         period: str = 'day',
-                         interval: str | None = None,
-                         start=None, end=None) -> Dict[str, Any]:
-    """
-    Devuelve puntos agregados (avg) para un parámetro de una parcela.
-    - period: 'hour'|'day'|'week'|'month'|'year' (ventana por defecto)
-    - interval: bucket: 'minute'|'hour'|'day'|'month'|'year'
-    - start/end: datetimes (si None se calcula en base a period)
-    """
-    now = timezone.now()
-    if end is None:
-        end = now
-    if start is None:
-        deltas = {'hour': timedelta(hours=1), 'day': timedelta(days=1), 'week': timedelta(days=7),
-                  'month': timedelta(days=30), 'year': timedelta(days=365)}
-        start = end - deltas.get(period, timedelta(days=1))
-
-    # elegir bucket por defecto
-    default_bucket = {'hour': 'minute', 'day': 'hour', 'week': 'day', 'month': 'day', 'year': 'month'}
-    bucket = interval or default_bucket.get(period, 'hour')
-
+def aggregate_timeseries(parcela_id, sensor, start=None, end=None, period='day', interval='auto', per_node: bool = False):
     db = get_db()
-    if db is None:
-        raise RuntimeError("MongoDB no disponible: configura MONGO_URL/MONGO_DB y agro_ai_platform.mongo.get_db()")
+    start_utc = to_utc(start) if start else None
+    end_utc = to_utc(end) if end else None
 
-    # elegir colección existente
-    coll_name_candidates = ['sensor_readings', 'lecturas_sensores', 'readings']
-    coll = None
-    for n in coll_name_candidates:
-        if n in db.list_collection_names():
-            coll = db[n]
-            break
-    if coll is None:
-        raise RuntimeError("Colección de lecturas no encontrada en MongoDB (sensor_readings / lecturas_sensores).")
+    match = {"parcela_id": int(parcela_id)}
+    if start_utc or end_utc:
+        match["timestamp"] = {}
+        if start_utc:
+            match["timestamp"]["$gte"] = start_utc
+        if end_utc:
+            match["timestamp"]["$lte"] = end_utc
 
-    # intentamos pipeline con $dateTrunc (Mongo 5+)
+    coll = db.get_collection("lecturas_sensores") if "lecturas_sensores" in db.list_collection_names() else db.get_collection("readings")
+
     try:
-        from pymongo import ASCENDING
         pipeline = [
-            {"$match": {"parcela_id": parcela_id,
-                        "timestamp": {"$gte": start, "$lte": end}}},
+            {"$match": match},
             {"$unwind": "$lecturas"},
             {"$unwind": "$lecturas.sensores"},
-            {"$match": {"lecturas.sensores.sensor": parametro}},
-            {"$project": {
-                "timestamp": {"$cond": [
-                    {"$isDate": "$timestamp"}, "$timestamp", {"$toDate": "$timestamp"}
-                ]},
-                "value": "$lecturas.sensores.valor"
-            }},
-            {"$group": {
-                "_id": {"$dateTrunc": {"date": "$timestamp", "unit": bucket}},
-                "avg": {"$avg": "$value"}
-            }},
-            {"$sort": {"_id": ASCENDING}}
+            {"$match": {"lecturas.sensores.sensor": sensor}},
+            {
+                "$addFields": {
+                    "bucket": {
+                        "$dateTrunc": {
+                            "date": {"$cond": [{"$eq": [{"$type": "$timestamp"}, "date"]}, "$timestamp", {"$dateFromString": {"dateString": "$timestamp"}}]},
+                            "unit": period,  # minute|hour|day|week|month|year
+                            "binSize": (1 if interval == "auto" else int(interval)),
+                            "timezone": "America/Lima"
+                        }
+                    },
+                    "value": "$lecturas.sensores.valor"
+                }
+            },
         ]
+
+        if per_node:
+            # Agrupar por nodo y bucket, sin promediar entre nodos (promedia solo dentro del mismo nodo cuando hay múltiples lecturas en el bucket)
+            pipeline += [
+                {
+                    "$group": {
+                        "_id": {"bucket": "$bucket", "nodo": "$lecturas.nodo_codigo"},
+                        "value": {"$avg": "$value"}
+                    }
+                },
+                {"$sort": {"_id.bucket": 1, "_id.nodo": 1}}
+            ]
+        else:
+            # Promediar por bucket entre todos los nodos (un solo punto por bucket)
+            pipeline += [
+                {
+                    "$group": {
+                        "_id": "$bucket",
+                        "value": {"$avg": "$value"}
+                    }
+                },
+                {"$sort": {"_id": 1}}
+            ]
+
         agg = list(coll.aggregate(pipeline, allowDiskUse=True))
-        points = [{"timestamp": (row["_id"].isoformat() if row["_id"] is not None else None),
-                   "value": float(row["avg"]) if row.get("avg") is not None else None} for row in agg]
-        meta = {"parcela_id": parcela_id, "parametro": parametro, "start": start.isoformat(), "end": end.isoformat(), "bucket": bucket, "points_count": len(points)}
+
+        if per_node:
+            series_map = {}
+            for row in agg:
+                bucket_dt = row["_id"]["bucket"]
+                nodo = row["_id"]["nodo"]
+                if bucket_dt is None or nodo is None:
+                    continue
+                pt = {
+                    "timestamp": bucket_dt.isoformat(),
+                    "value": (float(row["value"]) if row.get("value") is not None else None)
+                }
+                series_map.setdefault(nodo, []).append(pt)
+            series = [{"nodo": k, "points": v} for k, v in series_map.items()]
+            meta = {
+                "parcela_id": parcela_id,
+                "parametro": sensor,
+                "start": (start_utc.isoformat() if start_utc else None),
+                "end": (end_utc.isoformat() if end_utc else None),
+                "bucket": period,
+                "tz": "America/Lima",
+                "type": "per_node",
+                "series_count": len(series)
+            }
+            return {"meta": meta, "series": series}
+
+        points = [
+            {
+                "timestamp": (row["_id"].isoformat() if row.get("_id") is not None else None),
+                "value": (float(row["value"]) if row.get("value") is not None else None)
+            }
+            for row in agg
+        ]
+        meta = {
+            "parcela_id": parcela_id,
+            "parametro": sensor,
+            "start": (start_utc.isoformat() if start_utc else None),
+            "end": (end_utc.isoformat() if end_utc else None),
+            "bucket": period,
+            "tz": "America/Lima",
+            "points_count": len(points)
+        }
         return {"meta": meta, "points": points}
     except Exception:
-        # fallback: agrupar en Python
-        from dateutil.parser import isoparse
-        cursor = coll.find({"parcela_id": parcela_id}, projection=["timestamp", "lecturas"])
-        buckets = {}
+        # Fallback Python: proteger comparaciones None y aplicar promedio entre nodos para per_node=false
+        cursor = coll.find({"parcela_id": int(parcela_id)}, projection=["timestamp", "lecturas"])
+        if per_node:
+            node_buckets = {}
+        else:
+            buckets = {}
         for doc in cursor:
-            ts = doc.get("timestamp")
+            ts_dt = doc.get("timestamp")
+            # Normalizar timestamp a aware UTC
             try:
-                ts_dt = isoparse(ts) if isinstance(ts, str) else ts
+                ts_dt = to_utc(ts_dt)
             except Exception:
                 continue
-            if ts_dt < start or ts_dt > end:
+            if start_utc and ts_dt < start_utc:
+                continue
+            if end_utc and ts_dt > end_utc:
                 continue
             for lectura in doc.get("lecturas", []):
-                for sensor in lectura.get("sensores", []):
-                    if sensor.get("sensor") != parametro:
+                nodo_code = lectura.get("nodo_codigo")
+                for srec in lectura.get("sensores", []):
+                    if srec.get("sensor") != sensor:
                         continue
-                    val = sensor.get("valor")
-                    key_dt = _truncate_dt(ts_dt, bucket)
-                    buckets.setdefault(key_dt, []).append(float(val))
-        points = [{"timestamp": k.isoformat(), "value": (sum(v)/len(v) if v else None)} for k, v in sorted(buckets.items())]
-        meta = {"parcela_id": parcela_id, "parametro": parametro, "start": start.isoformat(), "end": end.isoformat(), "bucket": bucket, "points_count": len(points)}
+                    try:
+                        val = float(srec.get("valor"))
+                    except Exception:
+                        continue
+                    # Truncar al bucket en Lima para alinear con dateTrunc
+                    key_dt = to_lima(ts_dt)
+                    # función auxiliar (existente en tu módulo) debería truncar según 'period' e 'interval'
+                    key_dt = _truncate_dt(key_dt, period, (1 if interval == "auto" else int(interval)))
+                    if per_node:
+                        node_buckets.setdefault((nodo_code, key_dt), []).append(val)
+                    else:
+                        buckets.setdefault(key_dt, []).append(val)
+
+        if per_node:
+            series_map = {}
+            for (nodo_code, key_dt), vals in node_buckets.items():
+                pt = {"timestamp": key_dt.isoformat(), "value": (sum(vals) / len(vals) if vals else None)}
+                series_map.setdefault(nodo_code, []).append(pt)
+            series = [{"nodo": k, "points": sorted(v, key=lambda x: x["timestamp"])} for k, v in series_map.items()]
+            meta = {
+                "parcela_id": parcela_id,
+                "parametro": sensor,
+                "start": (start_utc.isoformat() if start_utc else None),
+                "end": (end_utc.isoformat() if end_utc else None),
+                "bucket": period,
+                "tz": "America/Lima",
+                "type": "per_node",
+                "series_count": len(series)
+            }
+            return {"meta": meta, "series": series}
+
+        points = [
+            {"timestamp": k.isoformat(), "value": (sum(v) / len(v) if v else None)}
+            for k, v in sorted(buckets.items())
+        ]
+        meta = {
+            "parcela_id": parcela_id,
+            "parametro": sensor,
+            "start": (start_utc.isoformat() if start_utc else None),
+            "end": (end_utc.isoformat() if end_utc else None),
+            "bucket": period,
+            "tz": "America/Lima",
+            "points_count": len(points)
+        }
         return {"meta": meta, "points": points}
  
 def fetch_history(parcela_id: int,
@@ -227,53 +319,71 @@ def fetch_history(parcela_id: int,
 
 def compute_kpis_for_user(user) -> Dict[str, Any]:
     """
-    Función simple role-aware para devolver KPIs.
-    - administradores -> KPIs globales
-    - otros roles -> KPIs sobre sus parcelas
+    KPIs usando Ciclo activo (ya no etapa_actual en Parcela).
+    - Admin/Superadmin: visión global.
+    - Otros: visión filtrada por usuario.
     """
     from users.permissions import role_name
     r = role_name(user)
 
-    # helper seguro si no hay modelos disponibles
-    def empty_kpis(scope='user'):
-        return {"scope": scope, "total_parcelas": 0, "parcelas_sin_etapa": 0, "avg_tamano_hectareas": None}
+    def empty(scope='user'):
+        return {
+            "scope": scope,
+            "total_parcelas": 0,
+            "parcelas_con_ciclo_activo": 0,
+            "parcelas_sin_ciclo_activo": 0,
+            "avg_tamano_hectareas": None
+        }
 
-    if Parcela is None:
-        return empty_kpis(scope='global' if r in ('superadmin','administrador') else 'user')
+    if Parcela is None or Ciclo is None:
+        return empty('global' if r in ('superadmin','administrador') else 'user')
 
     if r in ('superadmin', 'administrador'):
-        qs = Parcela.objects.all()
-        total_parcelas = qs.count()
-        parcelas_sin_etapa = qs.filter(etapa_actual__isnull=True).count()
-        avg_tamano = qs.aggregate(avg=Avg('tamano_hectareas'))['avg']
-        reglas_activas = ReglaPorEtapa.objects.filter(activo=True).count() if ReglaPorEtapa is not None else 0
-        etapas_totales = Etapa.objects.count() if Etapa is not None else 0
-        parcelas_por_cultivo = list(qs.values('cultivo__nombre').annotate(count=Count('id')).order_by('-count'))
+        total_parcelas = Parcela.objects.count()
+        parcelas_con_ciclo_activo = Ciclo.objects.filter(estado='activo').values('parcela_id').distinct().count()
+        parcelas_sin_ciclo_activo = total_parcelas - parcelas_con_ciclo_activo
+        avg_tamano = Parcela.objects.aggregate(avg=Avg('tamano_hectareas'))['avg']
+        reglas_activas = ReglaPorEtapa.objects.filter(activo=True).count() if ReglaPorEtapa else 0
+        etapas_totales = Etapa.objects.count() if Etapa else 0
+        parcelas_por_cultivo = list(
+            Ciclo.objects.filter(estado='activo', cultivo__isnull=False)
+            .values('cultivo__nombre').annotate(count=Count('parcela_id')).order_by('-count')
+        )
         return {
             "scope": "global",
             "total_parcelas": total_parcelas,
-            "parcelas_sin_etapa": parcelas_sin_etapa,
+            "parcelas_con_ciclo_activo": parcelas_con_ciclo_activo,
+            "parcelas_sin_ciclo_activo": parcelas_sin_ciclo_activo,
             "avg_tamano_hectareas": float(avg_tamano) if avg_tamano is not None else None,
             "reglas_activas": reglas_activas,
             "etapas_totales": etapas_totales,
             "parcelas_por_cultivo": parcelas_por_cultivo,
         }
 
-    # rol agricultor / tecnico / otros -> KPIs por usuario
-    qs = Parcela.objects.filter(usuario=user)
-    total_parcelas = qs.count()
-    parcelas_sin_etapa = qs.filter(etapa_actual__isnull=True).count()
-    parcelas_con_etapa = qs.exclude(etapa_actual__isnull=True).count()
-    avg_tamano = qs.aggregate(avg=Avg('tamano_hectareas'))['avg']
-    reglas_qs = ReglaPorEtapa.objects.filter(etapa__parcela__usuario=user, activo=True).distinct() if ReglaPorEtapa is not None else []
-    reglas_relevantes = reglas_qs.count() if hasattr(reglas_qs, 'count') else 0
-    parcelas_por_cultivo = list(qs.values('cultivo__nombre').annotate(count=Count('id')).order_by('-count'))
-    etapas_distribution = list(qs.values('etapa_actual__nombre').annotate(count=Count('id')).order_by('-count'))
+    # usuario (agricultor / técnico)
+    qs_parcelas = Parcela.objects.filter(usuario=user)
+    total_parcelas = qs_parcelas.count()
+    ciclos_activos = Ciclo.objects.filter(parcela__usuario=user, estado='activo')
+    parcelas_con_ciclo_activo = ciclos_activos.values('parcela_id').distinct().count()
+    parcelas_sin_ciclo_activo = total_parcelas - parcelas_con_ciclo_activo
+    avg_tamano = qs_parcelas.aggregate(avg=Avg('tamano_hectareas'))['avg']
+    reglas_relevantes = ReglaPorEtapa.objects.filter(
+        etapa__ciclos_en_etapa__in=ciclos_activos,
+        activo=True
+    ).distinct().count() if ReglaPorEtapa else 0
+    etapas_distribution = list(
+        ciclos_activos.values('etapa_actual__nombre')
+        .annotate(count=Count('id')).order_by('-count')
+    )
+    parcelas_por_cultivo = list(
+        ciclos_activos.filter(cultivo__isnull=False)
+        .values('cultivo__nombre').annotate(count=Count('parcela_id')).order_by('-count')
+    )
     return {
         "scope": "user",
         "total_parcelas": total_parcelas,
-        "parcelas_con_etapa": parcelas_con_etapa,
-        "parcelas_sin_etapa": parcelas_sin_etapa,
+        "parcelas_con_ciclo_activo": parcelas_con_ciclo_activo,
+        "parcelas_sin_ciclo_activo": parcelas_sin_ciclo_activo,
         "avg_tamano_hectareas": float(avg_tamano) if avg_tamano is not None else None,
         "reglas_relevantes": reglas_relevantes,
         "parcelas_por_cultivo": parcelas_por_cultivo,
@@ -465,3 +575,244 @@ def evaluate_rules_and_create_tasks_for_parcela(parcela_id: int, lookback_minute
         results["created_tasks"].append({"task_id": getattr(tarea, 'id', None), "origen_id": origen_id, "rule_id": regla.id})
 
     return results
+
+def _today_window_utc(now: datetime | None = None):
+    """
+    Retorna (start_utc, end_utc) del día actual en Lima convertidos a UTC.
+    """
+    now = now or timezone.now()
+    lima_now = now.astimezone(LIMA_TZ)
+    start_lima = lima_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_lima = start_lima + timedelta(days=1)
+    # pasar a UTC
+    start_utc = start_lima.astimezone(UTC)
+    end_utc = end_lima.astimezone(UTC)
+    return start_utc, end_utc
+
+def _score_linear(value: float | None, minimo: float | None, centro: float | None, maximo: float | None) -> float | None:
+    """
+    Score 0–100 con máximo en 'centro', baja lineal a 0 en 'minimo' y 'maximo'.
+    - Si falta valor o reglas -> None
+    - Fuera de [minimo, maximo] -> 0
+    """
+    if value is None or minimo is None or maximo is None or centro is None:
+        return None
+    try:
+        v = float(value); mn = float(minimo); mx = float(maximo); c = float(centro)
+    except Exception:
+        return None
+    if mn > mx:
+        mn, mx = mx, mn
+    if v < mn or v > mx:
+        return 0.0
+    # evitar divisiones por cero
+    if c <= mn:
+        # máximo pegado al mínimo: decae de mn(100) a mx(0)
+        return max(0.0, 100.0 * (mx - v) / (mx - mn)) if mx > mn else 100.0
+    if c >= mx:
+        # máximo pegado al máximo: crece de mn(0) a mx(100)
+        return max(0.0, 100.0 * (v - mn) / (mx - mn)) if mx > mn else 100.0
+    if v == c:
+        return 100.0
+    if v < c:
+        return max(0.0, 100.0 * (v - mn) / (c - mn))
+    else:
+        return max(0.0, 100.0 * (mx - v) / (mx - c))
+
+SENSOR_ALIAS_MAP = {
+    "temperatura": "Temperatura_aire",
+    "humedad": "Humedad_suelo",
+    "suelo": "Humedad_suelo",
+    "ndvi": "Ndvi",
+    "ph": "Ph",
+    "radiacion": "Radiacion",
+}
+
+def _canonical_param(name: str) -> str:
+    return SENSOR_ALIAS_MAP.get(name.lower(), name)
+
+def _fetch_today_param_avgs(parcela_id: int, start_utc, end_utc) -> dict[str, float]:
+    """
+    Devuelve promedio por sensor del día actual: { sensor: avg_value }
+    Promedia entre nodos y múltiples lecturas del día.
+    """
+    db = get_db()
+    if db is None:
+        return {}
+    coll_name_candidates = ['lecturas_sensores', 'sensor_readings', 'readings']
+    coll = None
+    for n in coll_name_candidates:
+        if n in db.list_collection_names():
+            coll = db[n]
+            break
+    if coll is None:
+        return {}
+
+    pipeline = [
+        {"$match": {
+            "parcela_id": int(parcela_id),
+            "timestamp": {"$gte": start_utc, "$lt": end_utc}
+        }},
+        {"$unwind": "$lecturas"},
+        {"$unwind": "$lecturas.sensores"},
+        {"$group": {
+            "_id": "$lecturas.sensores.sensor",
+            "avg_value": {"$avg": "$lecturas.sensores.valor"}
+        }},
+        {"$project": {"_id": 0, "sensor": "$_id", "value": "$avg_value"}}
+    ]
+    try:
+        rows = list(coll.aggregate(pipeline, allowDiskUse=True))
+    except Exception:
+        # Fallback simple en caso de cluster limitado
+        rows = []
+        cursor = coll.find(
+            {"parcela_id": int(parcela_id), "timestamp": {"$gte": start_utc, "$lt": end_utc}},
+            projection=["lecturas"]
+        )
+        sums: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        for d in cursor:
+            for l in d.get("lecturas", []):
+                for s in l.get("sensores", []):
+                    name = s.get("sensor"); val = s.get("valor")
+                    try:
+                        fv = float(val)
+                    except Exception:
+                        continue
+                    sums[name] = sums.get(name, 0.0) + fv
+                    counts[name] = counts.get(name, 0) + 1
+        for k, total in sums.items():
+            rows.append({"sensor": k, "value": total / counts[k]})  # promedio
+
+    raw = {r["sensor"]: float(r["value"]) for r in rows if r.get("sensor") and r.get("value") is not None}
+    # normalizar nombres
+    canon = {}
+    for k, v in raw.items():
+        canon_name = _canonical_param(k)
+        canon.setdefault(canon_name, []).append(v)
+    return {k: (sum(vals) / len(vals)) for k, vals in canon.items()}
+
+def compute_daily_kpis_parcela(parcela_id: int) -> dict:
+    """
+    KPIs diarios por parcela usando su Ciclo activo.
+    """
+    now = timezone.now()
+    start_utc, end_utc = _today_window_utc(now)
+
+    reglas_map: dict[str, dict] = {}
+    ciclo = None
+    if Ciclo:
+        ciclo = (Ciclo.objects
+                 .filter(parcela_id=parcela_id, estado='activo')
+                 .select_related('etapa_actual')
+                 .order_by('-created_at')
+                 .first())
+
+    if ciclo and ReglaPorEtapa:
+        qs_reglas = ReglaPorEtapa.objects.filter(activo=True)
+        if ciclo.etapa_actual:
+            qs_reglas = qs_reglas.filter(etapa=ciclo.etapa_actual)
+        else:
+            qs_reglas = qs_reglas.none()
+        for r in qs_reglas:
+            param = r.parametro
+            if not param:
+                continue
+            mn, mx = r.minimo, r.maximo
+            centro = getattr(r, 'centro', None)
+            if centro is None and mn is not None and mx is not None:
+                try:
+                    centro = (float(mn) + float(mx)) / 2.0
+                except Exception:
+                    centro = None
+            reglas_map[param] = {
+                "minimo": mn,
+                "maximo": mx,
+                "centro": centro,
+                "nombre": str(param).capitalize()
+            }
+
+    avgs = _fetch_today_param_avgs(int(parcela_id), start_utc, end_utc)
+
+    # Fallback: si no hay datos hoy, intentar últimas 24h (opcional)
+    if not avgs:
+        last24_start = (timezone.now() - timedelta(hours=24)).astimezone(UTC)
+        last24_end = timezone.now().astimezone(UTC)
+        avgs = _fetch_today_param_avgs(int(parcela_id), last24_start, last24_end)
+
+    # reglas_map keys ya están con nombre de regla; asegurar inclusión de todas las reglas
+    sensores = sorted(set(reglas_map.keys()) | set(avgs.keys()))
+
+    kpis = []
+    for s in sensores:
+        avg_val = avgs.get(s)
+        regla = reglas_map.get(s)
+        if regla:
+            score = _score_linear(avg_val, regla.get("minimo"), regla.get("centro"), regla.get("maximo"))
+        else:
+            score = 100.0 if avg_val is not None else None
+        kpis.append({
+            "nombre": s,
+            "dato": (round(score) if score is not None else None)
+        })
+
+    return {
+        "parcela_id": int(parcela_id),
+        "fecha": now.astimezone(LIMA_TZ).date().isoformat(),
+        "kpis": kpis
+    }
+
+def compute_daily_kpis_for_user(user) -> dict:
+    """
+    Agrega KPIs diarios por parcela y promedio general (solo parcelas con Ciclo activo).
+    """
+    if Parcela is None:
+        return {
+            "usuario_id": getattr(user, 'id', None),
+            "fecha": timezone.now().astimezone(LIMA_TZ).date().isoformat(),
+            "parcelas": [],
+            "general": []
+        }
+
+    parcela_ids = (Parcela.objects
+                   .filter(usuario=user)
+                   .values_list('id', flat=True))
+
+    per_parcela = [compute_daily_kpis_parcela(pid) for pid in parcela_ids]
+
+    # Conjunto completo de nombres (de reglas y de datos reales)
+    all_names = set()
+    for p in per_parcela:
+        for k in p.get("kpis", []):
+            all_names.add(k["nombre"])
+    # incluir todas las reglas potenciales del usuario (si hay ciclos)
+    if ReglaPorEtapa and Ciclo:
+        ciclos_activos = Ciclo.objects.filter(parcela__usuario=user, estado='activo')
+        reglas_user = ReglaPorEtapa.objects.filter(activo=True, etapa__in=[c.etapa_actual for c in ciclos_activos if c.etapa_actual])
+        for r in reglas_user:
+            if r.parametro:
+                all_names.add(str(r.parametro))
+
+    by_name: dict[str, list[float]] = {}
+    for item in per_parcela:
+        for k in item.get("kpis", []):
+            val = k["dato"]
+            if val is None:
+                continue
+            by_name.setdefault(k["nombre"], []).append(float(val))
+
+    general = []
+    for nombre in sorted(all_names):
+        vals = by_name.get(nombre, [])
+        general.append({
+            "nombre": nombre,
+            "dato": (round(sum(vals) / len(vals)) if vals else None)
+        })
+
+    return {
+        "usuario_id": getattr(user, 'id', None),
+        "fecha": timezone.now().astimezone(LIMA_TZ).date().isoformat(),
+        "parcelas": per_parcela,
+        "general": general
+    }

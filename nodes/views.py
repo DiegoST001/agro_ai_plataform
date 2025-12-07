@@ -6,7 +6,7 @@ from drf_spectacular.utils import extend_schema, OpenApiExample
 from rest_framework.exceptions import PermissionDenied, NotFound 
 from .auth import NodeTokenAuthentication
 from .models import Node, NodoSecundario, Parcela
-from agro_ai_platform.mongo import get_db
+from agro_ai_platform.mongo import get_db, to_utc, now_utc, to_lima
 from .serializers import NodeSerializer, NodoSecundarioSerializer
 # reemplazado: import directo de helpers de permisos del app nodes (reusa users.permissions)
 from .permissions import tiene_permiso, role_name, HasOperationPermission
@@ -126,14 +126,22 @@ class NodeIngestView(GenericAPIView):
     POST_MARGIN_MINUTES = POST_MARGIN_DEFAULT
 
     def post(self, request):
-        s = self.serializer_class(data=request.data)
-        s.is_valid(raise_exception=True)
+        payload = request.data.copy()
+        ts = payload.get("timestamp")
+        try:
+            ts_utc = to_utc(ts) if ts else now_utc()
+        except Exception:
+            # si timestamp inválido, usar now()
+            ts_utc = now_utc()
+        payload["timestamp"] = ts_utc
+
+        db = get_db()
+
         token = getattr(request, "auth", None)
         nodo_auth = getattr(request, "node", None)
         if not token or not nodo_auth:
             return Response({'detail': 'No autorizado', 'reason': 'auth_required'}, status=status.HTTP_401_UNAUTHORIZED)
 
-        payload = request.data or {}
         ts = payload.get("timestamp")
         if isinstance(ts, str):
             try:
@@ -143,6 +151,13 @@ class NodeIngestView(GenericAPIView):
         ts = ts or timezone.now()
         tz = timezone.get_current_timezone()
         ts_local = ts.astimezone(tz) if getattr(ts, 'tzinfo', None) else timezone.make_aware(ts, tz)
+
+        # Normalizar a hora local de Lima para validación de ventana
+        try:
+            ts_local = to_lima(ts_utc)
+        except Exception:
+            # si falla la conversión, continuar con tz actual
+            pass
 
         node = nodo_auth
         parcela = getattr(node, "parcela", None)
@@ -192,6 +207,23 @@ class NodeIngestView(GenericAPIView):
             )
 
         plan = parcela_plan.plan
+
+        # Validación: hora local (Lima) dentro de rango permitido del plan
+        try:
+            horarios = plan.get_schedule_for_date(ts_local.date(), tz=tz) or []
+            # calcular ventana [start_hour, end_hour) basada en horarios del plan
+            horas = [h.hour for h in horarios]
+            if horas:
+                start_hour = min(horas)
+                end_hour = max(horas) + 1  # rango semiabierto
+                if not (start_hour <= ts_local.hour < end_hour):
+                    return Response(
+                        {"error": "timestamp fuera de horario permitido", "reason": "fuera_de_horario"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+        except Exception:
+            # si get_schedule_for_date falla, continuar y validar más adelante con la ventana ±5 min existente
+            pass
 
         # límite diario = veces_por_dia
         try:

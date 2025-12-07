@@ -124,9 +124,8 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
-USE_I18N = True
-# USE_L10N = True  # eliminar en Django 5
+# Zona horaria (Perú) y TZ activada
+TIME_ZONE = 'America/Lima'
 USE_TZ = True
 
 STATIC_URL = '/static/'
@@ -160,11 +159,11 @@ SPECTACULAR_SETTINGS = {
     'SECURITY': [{'TokenAuth': []}],
 }
 
-# MongoDB (telemetría de sensores)
-MONGO_URI = os.getenv('MONGO_URI')  # nueva variable en .env
-MONGO_DB = os.getenv('MONGO_DB', 'sensors_db')
-# Mantén compatibilidad si algún código usa MONGO_URL
-MONGO_URL = MONGO_URI or os.getenv('MONGO_URL', 'mongodb://localhost:27017')
+# MongoDB (solo estas dos variables desde .env)
+MONGO_URL = os.getenv("MONGO_URL", "")
+MONGO_DB = os.getenv("MONGO_DB", "sensors_db")
+
+# Eliminar variables/alias duplicados (MONGO_URI, MONGODB_URI, etc.). Centralizar uso en agro_ai_platform.mongo.get_db()
 
 # CORS
 def _parse_origins(value: str):

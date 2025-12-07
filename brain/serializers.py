@@ -24,3 +24,18 @@ class TimeSeriesPointSerializer(serializers.Serializer):
 class TimeSeriesResponseSerializer(serializers.Serializer):
     meta = serializers.DictField()
     points = serializers.ListField(child=TimeSeriesPointSerializer())
+
+class DailyKPIItemSerializer(serializers.Serializer):
+    nombre = serializers.CharField()
+    dato = serializers.IntegerField(allow_null=True)
+
+class DailyParcelKPISerializer(serializers.Serializer):
+    parcela_id = serializers.IntegerField()
+    fecha = serializers.CharField()
+    kpis = serializers.ListField(child=DailyKPIItemSerializer())
+
+class DailyUserKPISerializer(serializers.Serializer):
+    usuario_id = serializers.IntegerField(required=False, allow_null=True)
+    fecha = serializers.CharField()
+    parcelas = serializers.ListField(child=DailyParcelKPISerializer())
+    general = serializers.ListField(child=DailyKPIItemSerializer())
