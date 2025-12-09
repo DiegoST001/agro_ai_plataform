@@ -25,3 +25,4 @@ staticfiles/
 .env
 .env.local
 .env.*.local"__pycache__/" 
+.env.bak
