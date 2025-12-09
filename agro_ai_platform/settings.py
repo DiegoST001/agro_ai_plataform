@@ -98,15 +98,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'agro_ai_platform.wsgi.application'
 
-# Configuración de base de datos PostgreSQL
 DB_URL = os.getenv('DATABASE_URL')
 if DB_URL:
-    # PostgreSQL desde Render con Internal Database URL
+    # Render requiere SSL; si tu URL no tiene ?sslmode=require, manten ssl_require=True
     DATABASES = {
         'default': dj_database_url.parse(DB_URL, conn_max_age=600, ssl_require=True)
     }
 else:
-    # Fallback PostgreSQL local
+    # Fallback local (opcional)
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
