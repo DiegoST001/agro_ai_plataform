@@ -23,7 +23,11 @@ class TimeSeriesPointSerializer(serializers.Serializer):
 
 class TimeSeriesResponseSerializer(serializers.Serializer):
     meta = serializers.DictField()
-    points = serializers.ListField(child=TimeSeriesPointSerializer())
+    points = serializers.ListField(child=TimeSeriesPointSerializer(), required=False)
+    # cuando per_node=true:
+    # series = [{"nodo": "...", "points": [TimeSeriesPointSerializer]}]
+    # para agricultores, se añade:
+    explanation = serializers.CharField(required=False, allow_null=True)
 
 class DailyKPIItemSerializer(serializers.Serializer):
     nombre = serializers.CharField()
@@ -39,3 +43,20 @@ class DailyUserKPISerializer(serializers.Serializer):
     fecha = serializers.CharField()
     parcelas = serializers.ListField(child=DailyParcelKPISerializer())
     general = serializers.ListField(child=DailyKPIItemSerializer())
+
+class AuditPointSerializer(serializers.Serializer):
+    timestamp = serializers.DateTimeField()
+    count = serializers.IntegerField()
+
+class AuditSeriesResponseSerializer(serializers.Serializer):
+    event = serializers.CharField()
+    period = serializers.CharField()
+    points = AuditPointSerializer(many=True)
+
+class AuditLogSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField(allow_null=True)
+    event = serializers.CharField()
+    module = serializers.CharField(allow_null=True)
+    action = serializers.CharField(allow_null=True)
+    metadata = serializers.JSONField()
+    created_at = serializers.DateTimeField()

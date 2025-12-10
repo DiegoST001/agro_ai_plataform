@@ -27,6 +27,11 @@ try:
     from crops.models import ReglaPorEtapa
 except ImportError:
     ReglaPorEtapa = None
+# >>> FALTA importar Etapa para KPIs globales
+try:
+    from crops.models import Etapa
+except ImportError:
+    Etapa = None
 
 # helper para truncar timestamps en Python (fallback)
 def _truncate_dt(dt, bucket: str):
@@ -693,6 +698,75 @@ def _fetch_today_param_avgs(parcela_id: int, start_utc, end_utc) -> dict[str, fl
         canon.setdefault(canon_name, []).append(v)
     return {k: (sum(vals) / len(vals)) for k, vals in canon.items()}
 
+def _latest_avgs_for_parcela(parcela_id: int) -> dict:
+    """
+    Promedia la última medición por nodo (por sensor) y devuelve:
+    { "timestamp": ISO, "avgs": { sensor: promedio } }
+    - Toma la última lectura por (nodo, sensor) y promedia entre nodos.
+    - timestamp: del último documento usado en el cálculo.
+    """
+    db = get_db()
+    if db is None:
+        return {"timestamp": None, "avgs": {}}
+
+    coll_name_candidates = ['lecturas_sensores', 'sensor_readings', 'readings']
+    coll = None
+    for n in coll_name_candidates:
+        if n in db.list_collection_names():
+            coll = db[n]
+            break
+    if coll is None:
+        return {"timestamp": None, "avgs": {}}
+
+    pipeline = [
+        {"$match": {"parcela_id": int(parcela_id)}},
+        {"$sort": {"timestamp": -1}},  # ordena documentos por timestamp desc
+        {"$unwind": "$lecturas"},
+        {"$unwind": "$lecturas.sensores"},
+        {
+            "$project": {
+                "nodo": "$lecturas.nodo_codigo",
+                "sensor": "$lecturas.sensores.sensor",
+                "value": "$lecturas.sensores.valor",
+                "timestamp": {
+                    "$cond": [
+                        {"$eq": [{"$type": "$timestamp"}, "date"]},
+                        "$timestamp",
+                        {"$dateFromString": {"dateString": "$timestamp"}}
+                    ]
+                }
+            }
+        },
+        # agrupamos por (nodo, sensor) y tomamos la primera por el sort previo → última lectura
+        {
+            "$group": {
+                "_id": {"nodo": "$nodo", "sensor": "$sensor"},
+                "last_value": {"$first": "$value"},
+                "last_ts": {"$first": "$timestamp"}
+            }
+        }
+    ]
+
+    rows = list(coll.aggregate(pipeline, allowDiskUse=True))
+    by_sensor: dict[str, list[float]] = {}
+    last_ts = None
+
+    for r in rows:
+        sensor = r["_id"]["sensor"]
+        val = r.get("last_value")
+        ts = r.get("last_ts")
+        try:
+            fv = float(val)
+        except Exception:
+            continue
+        by_sensor.setdefault(sensor, []).append(fv)
+        if ts and (last_ts is None or ts > last_ts):
+            last_ts = ts
+
+    avgs = { _canonical_param(k): (sum(v) / len(v) if v else None) for k, v in by_sensor.items() }
+    ts_iso = (last_ts.isoformat() if last_ts else None)
+    return {"timestamp": ts_iso, "avgs": avgs}
+
 def compute_daily_kpis_parcela(parcela_id: int) -> dict:
     """
     KPIs diarios por parcela usando su Ciclo activo.
@@ -757,10 +831,15 @@ def compute_daily_kpis_parcela(parcela_id: int) -> dict:
             "dato": (round(score) if score is not None else None)
         })
 
+    # NUEVO: adjuntar últimos promedios (entre nodos) y timestamp de cálculo
+    latest = _latest_avgs_for_parcela(int(parcela_id))
+
     return {
         "parcela_id": int(parcela_id),
         "fecha": now.astimezone(LIMA_TZ).date().isoformat(),
-        "kpis": kpis
+        "kpis": kpis,
+        "last_avgs_timestamp": latest["timestamp"],
+        "last_avgs": latest["avgs"]
     }
 
 def compute_daily_kpis_for_user(user) -> dict:

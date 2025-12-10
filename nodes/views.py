@@ -495,15 +495,37 @@ class NodeCreateView(generics.CreateAPIView):
 @extend_schema(
     tags=['Nodos'],
     summary='Actualizar nodo maestro',
-    description='Permite actualizar los datos de un nodo maestro existente.',
-    request=NodeSerializer,
+    description='Actualiza un nodo maestro. Requiere nudos.actualizar. Agricultor solo si es dueño de la parcela.',
+    request=NodeSerializer,  # PUT (completo)
     responses=NodeSerializer,
+    examples=[
+        OpenApiExample(
+            'PUT completo (maestro)',
+            value={
+                "lat": -12.05,
+                "lng": -77.05,
+                "estado": "activo",
+                "bateria": 80,
+                "senal": -72,
+                "last_seen": "2025-12-10T14:10:00Z"
+            },
+            request_only=True
+        ),
+        OpenApiExample(
+            'PATCH parcial (maestro)',
+            value={
+                "estado": "inactivo",
+                "bateria": 15
+            },
+            request_only=True
+        ),
+    ]
 )
 class NodeUpdateView(generics.UpdateAPIView):
     serializer_class = NodeSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsNodeOrAdmin()]  # <- cambio
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsNodeOrAdmin()]
 
     def get_queryset(self):
         user = self.request.user
@@ -512,6 +534,14 @@ class NodeUpdateView(generics.UpdateAPIView):
         if role_name(user) == 'agricultor':
             return Node.objects.filter(parcela__usuario=user)
         return Node.objects.all()
+
+    @extend_schema(
+        request=NodeSerializer,  # PATCH (parcial)
+        responses=NodeSerializer,
+        examples=[OpenApiExample('PATCH ejemplo', value={"estado": "activo", "bateria": 95}, request_only=True)]
+    )
+    def patch(self, request, *args, **kwargs):
+        return super().patch(request, *args, **kwargs)
 
 @extend_schema(
     tags=['Nodos'],
@@ -674,15 +704,31 @@ class NodoSecundarioDetailView(generics.RetrieveAPIView):
 @extend_schema(
     tags=['Nodos'],
     summary='Actualizar nodo secundario',
-    description='Permite actualizar los datos de un nodo secundario existente.',
-    request=NodoSecundarioSerializer,
+    description='Actualiza un nodo secundario. Requiere nudos.actualizar. Agricultor solo si es dueño de la parcela del maestro.',
+    request=NodoSecundarioSerializer,  # PUT
     responses=NodoSecundarioSerializer,
+    examples=[
+        OpenApiExample(
+            'PUT completo (secundario)',
+            value={
+                "estado": "activo",
+                "bateria": 90,
+                "last_seen": "2025-12-10T14:20:00Z"
+            },
+            request_only=True
+        ),
+        OpenApiExample(
+            'PATCH parcial (secundario)',
+            value={"estado": "inactivo"},
+            request_only=True
+        ),
+    ]
 )
 class NodoSecundarioUpdateView(generics.UpdateAPIView):
     serializer_class = NodoSecundarioSerializer
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsNodeOrAdmin()]  # <- cambio
+        return [permissions.IsAuthenticated(), HasOperationPermission('nodos', 'actualizar'), OwnsNodeOrAdmin()]
 
     def get_queryset(self):
         user = self.request.user
@@ -691,3 +737,11 @@ class NodoSecundarioUpdateView(generics.UpdateAPIView):
         if role_name(user) == 'agricultor':
             return NodoSecundario.objects.filter(maestro__parcela__usuario=user)
         return NodoSecundario.objects.all()
+
+    @extend_schema(
+        request=NodoSecundarioSerializer,  # PATCH
+        responses=NodoSecundarioSerializer,
+        examples=[OpenApiExample('PATCH ejemplo', value={"bateria": 50}, request_only=True)]
+    )
+    def patch(self, request, *args, **kwargs):
+        return super().patch(request, *args, **kwargs)

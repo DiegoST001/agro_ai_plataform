@@ -25,6 +25,16 @@ def _csv(key, default=""):
     raw = os.getenv(key, default) or ""
     return [x.strip() for x in raw.split(",") if x.strip()]
 
+def _getenv_bool(name: str, default: bool) -> bool:
+    return str(os.getenv(name, "true" if default else "false")).strip().lower() in ("1", "true", "yes")
+
+def _getenv_int(name: str, default: int) -> int:
+    val = os.getenv(name)
+    try:
+        return int(str(val).strip()) if val is not None else default
+    except ValueError:
+        return default
+
 SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key')
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = _csv("ALLOWED_HOSTS", "localhost,127.0.0.1")
@@ -200,3 +210,21 @@ if DEBUG:
 CLOUDINARY_URL = os.getenv("CLOUDINARY_URL")
 if CLOUDINARY_URL:
     cloudinary.config(cloudinary_url=CLOUDINARY_URL)
+
+# Email (único bloque)
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend").strip().strip('"').strip("'")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "soporte@agronix.lat")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = _getenv_int("EMAIL_PORT", 587)
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _getenv_bool("EMAIL_USE_TLS", True)
+PASSWORD_RESET_TIMEOUT = _getenv_int("PASSWORD_RESET_TIMEOUT", 86400)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+BRAND_NAME = os.getenv("BRAND_NAME", "Agronix")
+BRAND_LOGO_URL = os.getenv("BRAND_LOGO_URL", "https://ik.imagekit.io/b7yqboqjz/logo.png")
+BRAND_PRIMARY_COLOR = os.getenv("BRAND_PRIMARY_COLOR", "#48a26d")
+BRAND_BG_COLOR = os.getenv("BRAND_BG_COLOR", "#0f2f1f")
+BRAND_CARD_BG_COLOR = os.getenv("BRAND_CARD_BG_COLOR", "#173a2a")
+BRAND_TEXT_COLOR = os.getenv("BRAND_TEXT_COLOR", "#e8f5e9")

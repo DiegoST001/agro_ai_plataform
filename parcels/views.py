@@ -5,6 +5,7 @@ from rest_framework import permissions, generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import JSONParser
 import cloudinary.uploader
 
 from drf_spectacular.utils import extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample
@@ -350,7 +351,7 @@ class ParcelaListCreateView(generics.ListCreateAPIView):
     Lista parcelas visibles para el usuario y permite crear nuevas parcelas.
     """
     queryset = Parcela.objects.select_related('usuario').order_by('nombre')
-    parser_classes = [MultiPartParser, FormParser]  # permitir multipart para subir 'imagen' al crear
+    parser_classes = [MultiPartParser, FormParser, JSONParser]  # aceptar multipart/form-data y application/json
 
     def get_serializer_class(self):
         return ParcelaReadSerializer if self.request.method == 'GET' else ParcelaCreateSerializer
@@ -399,7 +400,7 @@ class ParcelaDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     queryset = Parcela.objects.select_related('usuario')
     serializer_class = ParcelaReadSerializer
-    parser_classes = [MultiPartParser, FormParser]  # permitir multipart para actualizar imagen
+    parser_classes = [MultiPartParser, FormParser, JSONParser]  # aceptar JSON en update
 
     def get_serializer_class(self):
         if self.request.method == 'GET':
@@ -513,7 +514,7 @@ class ParcelaImageListCreateView(generics.ListCreateAPIView):
     POST: sube una imagen (form-data field 'image') a Cloudinary y crea ParcelaImage (requiere 'parcelas.actualizar')
     """
     serializer_class = ParcelaImageSerializer
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_permissions(self):
         if self.request.method == 'GET':

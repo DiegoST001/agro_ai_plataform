@@ -35,6 +35,8 @@ class NodeSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'parcela': {'read_only': True},
             'codigo': {'read_only': True},
+            'created_at': {'read_only': True},
+            'updated_at': {'read_only': True},
         }
 
     def get_nodos_secundarios(self, obj):
@@ -63,6 +65,8 @@ class NodoSecundarioSerializer(serializers.ModelSerializer):
         model = NodoSecundario
         fields = ['id', 'codigo', 'maestro', 'estado', 'bateria', 'last_seen', 'created_at', 'updated_at']
         extra_kwargs = {
-            'maestro': {'read_only': True},  # <-- Esto soluciona el error
-            'codigo': {'read_only': True},   # El código también es automático
+            'maestro': {'read_only': True},
+            'codigo': {'read_only': True},
+            'created_at': {'read_only': True},
+            'updated_at': {'read_only': True},
         }

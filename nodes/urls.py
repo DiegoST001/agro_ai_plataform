@@ -17,10 +17,12 @@ urlpatterns = [
 
     path('nodos/', NodeListView.as_view(), name='nodos-list'),
     re_path(r'^nodos/(?P<pk>\d+)/?$', NodeDetailView.as_view(), name='nodos-detail'),
+    re_path(r'^nodos/(?P<pk>\d+)/update/?$', NodeUpdateView.as_view(), name='nodos-update'),
     re_path(r'^nodos/(?P<pk>\d+)/delete/?$', NodeDeleteView.as_view(), name='nodos-delete'),
     re_path(r'^nodos/(?P<nodo_master_id>\d+)/secundarios/?$', NodoSecundarioListView.as_view(), name='nodos-secundarios-list'),
     re_path(r'^nodos/(?P<nodo_master_id>\d+)/secundarios/create/?$', NodoSecundarioCreateView.as_view(), name='nodos-secundarios-create'),
     re_path(r'^secundarios/(?P<pk>\d+)/?$', NodoSecundarioDetailView.as_view(), name='nodos-secundarios-detail'),
+    re_path(r'^secundarios/(?P<pk>\d+)/update/?$', NodoSecundarioUpdateView.as_view(), name='nodos-secundarios-update'),
     re_path(r'^secundarios/(?P<pk>\d+)/delete/?$', NodoSecundarioDeleteView.as_view(), name='nodos-secundarios-delete'),
 
     path('secundarios/', NodoSecundarioListAllView.as_view(), name='nodos-secundarios-all'),

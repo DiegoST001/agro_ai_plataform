@@ -10,12 +10,81 @@ from authentication.models import User
 from .serializers import (
     RolSerializer, ModuloSerializer, RolesOperacionesSerializer, UserRoleUpdateSerializer,
     UserOperacionOverrideSerializer, AdminUserListSerializer, AdminUserUpdateSerializer,
-    PerfilUsuarioSerializer, UserWithProfileSerializer, UserDetailSerializer, ProspectoSerializer
+    PerfilUsuarioSerializer, UserWithProfileSerializer, UserDetailSerializer, ProspectoSerializer,
+    AdminUserCreateSerializer,
+    AdminUserListSerializer,
+    AdminUserDetailSerializer,  # asegurar import
+    ChangePasswordSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
+    UserWithProfileUpdateSerializer,
+    UserWithProfileSerializer,
 )
 from .permissions import HasOperationPermission
 from rest_framework.views import APIView
 from .models import Prospecto
 from django.db import transaction
+from django.core.mail import EmailMultiAlternatives
+from django.utils.html import strip_tags
+from django.urls import reverse
+from django.conf import settings
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+
+# Token generator de Django (respeta PASSWORD_RESET_TIMEOUT en settings)
+token_generator = PasswordResetTokenGenerator()
+
+def _build_reset_link(request, uidb64: str, token: str) -> str:
+    base = getattr(settings, "FRONTEND_URL", f"{request.scheme}://{request.get_host()}")
+    return f"{base}/reset-password?uid={uidb64}&token={token}"
+
+def _reset_email_html(link: str) -> str:
+    brand_name = getattr(settings, "BRAND_NAME", "Agronix")
+    brand_logo = getattr(settings, "BRAND_LOGO_URL", "https://ik.imagekit.io/b7yqboqjz/logo.png")
+    primary = getattr(settings, "BRAND_PRIMARY_COLOR", "#48a26d")   # botón
+    bg = getattr(settings, "BRAND_BG_COLOR", "#0f2f1f")             # fondo oscuro
+    card_bg = getattr(settings, "BRAND_CARD_BG_COLOR", "#173a2a")   # tarjeta
+    text = getattr(settings, "BRAND_TEXT_COLOR", "#e8f5e9")         # texto claro
+
+    return f"""
+<table width="100%" bgcolor="{bg}" style="padding:40px;font-family:Arial,sans-serif;background:{bg};">
+  <tr><td align="center">
+    <table width="560" bgcolor="{card_bg}" style="border-radius:14px;padding:34px;text-align:center;background:{card_bg};">
+      <tr><td>
+        <div style="background:{bg};border-radius:10px;padding:12px;display:inline-block;">
+          <img src="{brand_logo}" width="96" style="display:block;" alt="{brand_name} Logo" />
+        </div>
+        <h2 style="color:{primary};margin:18px 0 12px;font-weight:700;">Recuperación de contraseña</h2>
+        <p style="font-size:15px;color:{text};margin:0 0 10px;line-height:1.55;">
+          Hemos recibido una solicitud para restablecer la contraseña de tu cuenta.
+        </p>
+        <p style="font-size:15px;color:{text};margin:0 0 22px;line-height:1.55;">
+          Haz clic en el botón para continuar:
+        </p>
+
+        <a href="{link}" style="
+          display:inline-block;margin-top:4px;padding:14px 30px;
+          background:{primary};color:#0b1d14;text-decoration:none;font-size:16px;
+          border-radius:10px;font-weight:800;">
+          Restablecer contraseña
+        </a>
+
+        <p style="margin-top:26px;font-size:13px;color:#cfe6d9;">
+          Si no solicitaste esto, puedes ignorar este mensaje.<br/>
+          El enlace expirará en 24 horas.
+        </p>
+
+        <hr style="border:none;border-top:1px solid #245a40;margin:24px 0;" />
+        <p style="margin-top:6px;font-size:12px;color:#cfe6d9;">
+          Este correo fue enviado por {brand_name} — Plataforma de Agricultura Inteligente.<br/>
+          No respondas a este mensaje.
+        </p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+"""
 
 @extend_schema(
     tags=['User'],
@@ -106,29 +175,24 @@ class UserRolesView(View):
 
 @extend_schema(
     tags=['User'],
-    summary='Ver, crear o actualizar perfil del usuario autenticado',
+    summary='Ver, crear o actualizar perfil y datos básicos del usuario autenticado',
     description=(
-        "Permite consultar, crear o actualizar el perfil del usuario autenticado.\n\n"
-        "- **GET:** Devuelve el perfil del usuario autenticado.\n"
-        "- **POST:** Crea el perfil si no existe (normalmente no se usa, el perfil se crea automáticamente).\n"
-        "- **PATCH:** Actualiza parcialmente el perfil.\n"
-        "- **PUT:** Actualiza completamente el perfil.\n\n"
-        "**Nota:** El perfil se crea vacío al crear el usuario, por lo que normalmente solo se usa PATCH o PUT para actualizar."
+        "GET: Devuelve username, email, rol y el perfil del usuario autenticado.\n"
+        "PATCH/PUT: Actualiza username/email (con validación de unicidad) y los campos del perfil.\n"
+        "POST: Crea el perfil si no existe (normalmente no es necesario)."
     ),
-    request=PerfilUsuarioSerializer,
-    responses=PerfilUsuarioSerializer,
+    request=UserWithProfileUpdateSerializer,
+    responses=UserWithProfileSerializer,
     examples=[
         OpenApiExample(
-            'Ejemplo de perfil',
+            'Actualización parcial',
             value={
+                "username": "agro_user",
+                "email": "agro@demo.com",
                 "nombres": "Juan",
-                "apellidos": "Perez",
-                "telefono": "999888777",
-                "dni": "12345678",
-                "fecha_nacimiento": "1990-01-01",
-                "experiencia_agricola": 5,
-                # "foto_perfil": "https://url.com/foto.jpg"
-            }
+                "telefono": "999888777"
+            },
+            request_only=True
         )
     ]
 )
@@ -136,45 +200,35 @@ class PerfilUsuarioView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """
-        Devuelve los datos del usuario autenticado con el perfil anidado.
-        """
-        serializer = UserWithProfileSerializer(request.user)
-        return Response(serializer.data)
+        # Devuelve datos del usuario + perfil
+        s = UserWithProfileSerializer(request.user)
+        return Response(s.data)
 
     def post(self, request):
-        """
-        Crea el perfil del usuario autenticado si no existe.
-        """
+        # Crea solo el perfil si no existe
+        from .models import PerfilUsuario
         if PerfilUsuario.objects.filter(usuario=request.user).exists():
             return Response({'detail': 'Perfil ya existe.'}, status=status.HTTP_400_BAD_REQUEST)
-        serializer = PerfilUsuarioSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(usuario=request.user)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        ps = PerfilUsuarioSerializer(data=request.data)
+        ps.is_valid(raise_exception=True)
+        ps.save(usuario=request.user)
+        # Respuesta combinada
+        s = UserWithProfileSerializer(request.user)
+        return Response(s.data, status=status.HTTP_201_CREATED)
 
     def patch(self, request):
-        """
-        Actualiza parcialmente los datos del perfil del usuario autenticado.
-        """
-        perfil = PerfilUsuario.objects.get(usuario=request.user)
-        serializer = PerfilUsuarioSerializer(perfil, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Actualización parcial de user + perfil
+        s = UserWithProfileUpdateSerializer(instance=request.user, data=request.data, partial=True, context={'request': request})
+        s.is_valid(raise_exception=True)
+        s.update(request.user, s.validated_data)
+        return Response(UserWithProfileSerializer(request.user).data)
 
     def put(self, request):
-        """
-        Actualiza completamente los datos del perfil del usuario autenticado.
-        """
-        perfil = PerfilUsuario.objects.get(usuario=request.user)
-        serializer = PerfilUsuarioSerializer(perfil, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Actualización completa de user + perfil
+        s = UserWithProfileUpdateSerializer(instance=request.user, data=request.data, context={'request': request})
+        s.is_valid(raise_exception=True)
+        s.update(request.user, s.validated_data)
+        return Response(UserWithProfileSerializer(request.user).data)
 
 @extend_schema(tags=['RBAC'], summary='Listar roles', description="Devuelve todos los roles del sistema. Solo administradores pueden acceder.")
 class RolViewSet(viewsets.ReadOnlyModelViewSet):
@@ -302,30 +356,62 @@ class UserOperacionOverrideViewSet(viewsets.ModelViewSet):
     get=extend_schema(
         tags=['Admin'],
         summary='Listar usuarios',
-        description=(
-            "Devuelve la lista de usuarios registrados en el sistema.\n\n"
-            "Permite filtrar por rol, estado activo, búsqueda y ordenamiento.\n"
-            "**Permisos:** Solo administradores pueden acceder."
-        ),
+        description="Devuelve la lista de usuarios. Requiere administracion.ver.",
         parameters=[
-            OpenApiParameter(name='rol', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY, description="Filtrar por rol"),
-            OpenApiParameter(name='is_active', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY, description="Filtrar por estado activo"),
-            OpenApiParameter(name='search', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description="Buscar por username o email"),
-            OpenApiParameter(name='ordering', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY, description="Ordenar por campo"),
+            OpenApiParameter(name='rol', type=OpenApiTypes.INT, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='is_active', type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='search', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='ordering', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
         ],
         responses=AdminUserListSerializer(many=True),
+    ),
+    post=extend_schema(
+        tags=['Admin'],
+        summary='Crear usuario',
+        description="Crea un usuario. Requiere usuarios.crear.",
+        request=AdminUserCreateSerializer,
+        responses=AdminUserDetailSerializer,  # devuelve detalle con rol y perfil
+        examples=[
+            OpenApiExample('Crear usuario', value={
+                "username": "nuevo_admin",
+                "email": "nuevo@demo.com",
+                "password": "Secreto123",
+                "rol_id": 2,
+                "is_active": True
+            }, request_only=True)
+        ]
     )
 )
-class AdminUserListView(generics.ListAPIView):
+class AdminUserListCreateView(generics.ListCreateAPIView):
     queryset = User.objects.select_related('rol').all()
-    serializer_class = AdminUserListSerializer
     filterset_fields = ['rol', 'is_active']
     search_fields = ['username', 'email']
     ordering_fields = ['date_joined', 'username', 'email']
     ordering = ['-date_joined']
 
+    def get_serializer_class(self):
+        if self.request.method == 'GET':
+            return AdminUserListSerializer
+        return AdminUserCreateSerializer
+
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), HasOperationPermission('administracion', 'ver')]
+        base = [permissions.IsAuthenticated()]
+        if self.request.method == 'GET':
+            base.append(HasOperationPermission('administracion', 'ver'))
+        else:
+            base.append(HasOperationPermission('usuarios', 'crear'))
+        return base
+
+    def perform_create(self, serializer):
+        # Crear y devolver detalle
+        user = serializer.save()
+        self.created_instance = user  # guardar para response
+
+    def create(self, request, *args, **kwargs):
+        resp = super().create(request, *args, **kwargs)
+        # re-serializar con detalle
+        detail = UserDetailSerializer(self.created_instance)
+        return Response(detail.data, status=status.HTTP_201_CREATED)
 
 @extend_schema_view(
     get=extend_schema(
@@ -547,3 +633,145 @@ class ProspectoPublicCreateView(APIView):
             estado='pendiente'
         )
         return Response({'msg': 'Prospecto registrado'}, status=status.HTTP_201_CREATED)
+
+@extend_schema(
+    tags=['User'],
+    summary='Cambiar contraseña (usuario autenticado)',
+    description=(
+        "Permite al usuario autenticado cambiar su contraseña.\n"
+        "Valida la contraseña actual y aplica validadores de Django para la nueva contraseña."
+    ),
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "current_password": {"type": "string", "example": "MiContraseñaActual123"},
+                "new_password": {"type": "string", "example": "NuevaContraseñaSegura123"},
+                "confirm_new_password": {"type": "string", "example": "NuevaContraseñaSegura123"}
+            },
+            "required": ["current_password", "new_password", "confirm_new_password"]
+        }
+    },
+    responses={
+
+        200: OpenApiExample('OK', value={"detail": "Contraseña actualizada"}),
+
+        400: OpenApiExample('Error validación', value={"current_password": ["incorrecta"], "confirm_new_password": ["no coincide"]})
+    }
+)
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({'detail': 'Contraseña actualizada'}, status=status.HTTP_200_OK)
+
+@extend_schema(
+    tags=['Admin'],
+    summary='Actualizar contraseña de un usuario (admin)',
+    description="Admin/operador con permiso usuarios.actualizar puede establecer la contraseña de otro usuario.",
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "new_password": {"type": "string", "example": "Nueva123!"},
+                "confirm_new_password": {"type": "string", "example": "Nueva123!"}
+            },
+            "required": ["new_password", "confirm_new_password"]
+        }
+    },
+    responses={
+        200: OpenApiExample('OK', value={"detail": "Contraseña actualizada"}),
+        404: OpenApiExample('No encontrado', value={"detail": "Usuario no encontrado"})
+    }
+)
+class AdminUserPasswordUpdateView(APIView):
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), HasOperationPermission('usuarios', 'actualizar')]
+
+    def post(self, request, user_id: int):
+        from django.contrib.auth.password_validation import validate_password
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'detail': 'Usuario no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+        new_password = (request.data.get('new_password') or '').strip()
+        confirm = (request.data.get('confirm_new_password') or '').strip()
+        if not new_password or not confirm:
+            return Response({'detail': 'new_password y confirm_new_password son requeridos'}, status=status.HTTP_400_BAD_REQUEST)
+        if new_password != confirm:
+            return Response({'detail': 'confirm_new_password no coincide'}, status=status.HTTP_400_BAD_REQUEST)
+
+        validate_password(new_password, user)
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        return Response({'detail': 'Contraseña actualizada'}, status=status.HTTP_200_OK)
+
+from drf_spectacular.utils import extend_schema, OpenApiExample
+
+@extend_schema(
+    tags=['Auth'],
+    summary='Solicitar recuperación de contraseña',
+    request={'application/json': {'type':'object','properties':{'email':{'type':'string','example':'usuario@agronix.lat'}},'required':['email']}},
+    responses={200: OpenApiExample('OK', value={'detail':'Si el correo existe, se envió el enlace.'})}
+)
+class PasswordResetRequestView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        ser = PasswordResetRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user = ser.validated_data.get('user')
+        if user:
+            uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+            token = token_generator.make_token(user)
+            link = _build_reset_link(request, uidb64, token)
+
+            html_content = _reset_email_html(link)
+            email = EmailMultiAlternatives(
+                subject="🔐 Recuperar contraseña — Agronix",
+                body=strip_tags(html_content),
+                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@agro-ai.local"),
+                to=[user.email],
+            )
+            email.attach_alternative(html_content, "text/html")
+            # en pruebas usa False para ver errores SMTP
+            email.send(fail_silently=False)
+
+        return Response({'detail': 'Si el correo existe, se envió el enlace.'}, status=status.HTTP_200_OK)
+
+@extend_schema(
+    tags=['Auth'],
+    summary='Confirmar recuperación de contraseña',
+    request={'application/json': {'type':'object','properties':{
+        'uid':{'type':'string','example':'Mg=='},
+        'token':{'type':'string','example':'abc-123'},
+        'new_password':{'type':'string','example':'NuevaSegura123!'},
+        'confirm_new_password':{'type':'string','example':'NuevaSegura123!'}
+    },'required':['uid','token','new_password','confirm_new_password']}},
+    responses={200: OpenApiExample('OK', value={'detail':'Contraseña actualizada.'})}
+)
+class PasswordResetConfirmView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        ser = PasswordResetConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        uidb64 = ser.validated_data['uid']
+        token = ser.validated_data['token']
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.get(pk=uid)
+        except Exception:
+            return Response({'detail': 'Token inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not token_generator.check_token(user, token):
+            return Response({'detail': 'Token expirado o inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        new_password = ser.validated_data['new_password']
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        return Response({'detail': 'Contraseña actualizada.'}, status=status.HTTP_200_OK)
